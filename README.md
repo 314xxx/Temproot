@@ -16,15 +16,38 @@
 
 ## 支持设备
 
-| 设备代号 | 型号 |
-|---------|------|
-| marble | Redmi K60 |
-| mondrian | Redmi K60 Pro |
-| mayfly | Redmi K60 Ultra |
-| diting | Redmi K50 |
-| socrates | Xiaomi 13 |
+### 适用机型
 
-**要求**: 安全补丁日期 ≤ 2025-02-01
+| 设备代号 | 型号 | 备注 |
+|---------|------|------|
+| marble | Redmi K60 | ✅ 完全支持 |
+| mondrian | Redmi K60 Pro | ✅ 完全支持 |
+| socrates | Redmi K60 Ultra | ✅ 完全支持 |
+| diting | Redmi K50 | ✅ 完全支持 | 
+| munch | Redmi K50 电竞版 | ✅ 完全支持 |
+| topaz | Redmi Note 12 Turbo | ✅ 完全支持 |
+| fuxi | Xiaomi 13 | ✅ 完全支持 |
+
+### MIUI 12 系列
+
+| 设备 | 型号 | 备注 |
+|------|------|------|
+| cupid | Xiaomi 12 | ⚠️ 需要二月补丁之前 |
+| psyche | Xiaomi 12X | ❌ 不支持 |
+| zeus | Xiaomi 12 Pro | ❌ 不支持（天玑版） |
+
+### 支持的处理器
+
+- 骁龙 8+ Gen 1
+- 骁龙 8 Gen 1
+- 骁龙 7+ Gen 2
+
+**其他机型请勿使用！**
+
+**要求**: 
+- 安全补丁日期 ≤ 2025-02-01
+- 已解锁 Bootloader
+- 已安装 Shizuku
 
 ## 前提条件
 
@@ -78,6 +101,7 @@ TempRoot/
 │   │   └── AndroidManifest.xml
 │   └── build.gradle.kts    # 应用构建配置
 ├── README.md               # 本文档
+├── BINARY_FILES_README.md  # 二进制文件说明
 └── settings.gradle.kts     # 项目设置
 ```
 
@@ -132,3 +156,8 @@ TempRoot/
 ## 免责声明
 
 使用本工具造成的一切后果由使用者自行承担。开发者不对任何数据丢失、设备损坏或法律问题负责。
+
+## 参考链接
+
+- 酷安原帖: https://www.coolapk.com/feed/71852731
+- KernelSU: https://github.com/tiann/KernelSU
