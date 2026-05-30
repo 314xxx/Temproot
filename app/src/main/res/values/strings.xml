@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">TempRoot</string>
+    <string name="shizuku_permission_description">此应用需要 Shizuku 权限来执行 Shell 命令以获取临时 Root 权限。</string>
+</resources>
