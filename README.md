@@ -162,6 +162,5 @@ TempRoot/
 
 ## 参考链接
 
-- 酷安原帖: https://www.coolapk.com/feed/71852731
 - KernelSU: https://github.com/tiann/KernelSU
 - 小米设备代号: https://wiki.uotan.cn/index.php?title=小米手机设备代号名称对照表
