@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
+import rikka.shizuku.ShizukuRemoteProcess
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileOutputStream
@@ -17,7 +18,7 @@ class RootManager(private val context: Context) {
 
     private val tag = "RootManager"
     
-    // 兼容的设备列表 (根据酷安原帖更新)
+    // 兼容的设备列表
     private val supportedDevices = listOf(
         // K60 系列
         "socrates",      // Redmi K60 Pro
@@ -43,7 +44,7 @@ class RootManager(private val context: Context) {
         "fuxi"           // 小米13
     )
     
-    // 安全补丁截止日期 (2025-02-01)
+    // 安全补丁截止日期
     private val safePatchDate = "2025-02-01"
 
     suspend fun checkEnvironment(): Result<String> = withContext(Dispatchers.IO) {
@@ -65,7 +66,7 @@ class RootManager(private val context: Context) {
                 return@withContext Result.failure(Exception("安全补丁日期 ($patch) 过高，需要 <= $safePatchDate"))
             }
 
-            // 4. 准备文件 (从 assets 复制到 /data/local/tmp)
+            // 4. 准备文件
             prepareFiles()
 
             return@withContext Result.success("环境检查通过: $device, Patch: $patch")
@@ -85,7 +86,7 @@ class RootManager(private val context: Context) {
     // 使用 Shizuku 执行 Shell 命令
     private suspend fun executeCommand(command: String): Pair<Int, String> = withContext(Dispatchers.IO) {
         try {
-            val process = Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
+            val process = ShizukuRemoteProcess(arrayOf("sh", "-c", command))
             val reader = BufferedReader(InputStreamReader(process.inputStream))
             val errorReader = BufferedReader(InputStreamReader(process.errorStream))
             
@@ -122,7 +123,7 @@ class RootManager(private val context: Context) {
         }
     }
 
-    // 执行 SELinux 临时宽容 (cf 漏洞)
+    // 执行 SELinux 临时宽容
     suspend fun setSELinuxPermissive(
         maxRetries: Int = 50,
         onLog: (String) -> Unit,
