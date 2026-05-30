@@ -20,9 +20,14 @@ jobs:
         
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
+      with:
+        gradle-version-file: gradle/wrapper/gradle-wrapper.properties
+      
+    - name: Grant execute permission
+      run: chmod +x gradlew
       
     - name: Build Debug APK
-      run: gradle assembleDebug
+      run: ./gradlew assembleDebug
       
     - name: Upload APK
       uses: actions/upload-artifact@v4
