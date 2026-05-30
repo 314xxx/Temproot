@@ -1,4 +1,4 @@
-# TempRoot - MIUI/HyperOS 一键临时 Root 应用
+# TempRoot - HyperOS 一键临时 Root 应用
 
 一个基于 KernelSU late-load 注入的 Android 应用，通过 Shizuku 实现一键获取临时 Root 权限。
 
@@ -50,7 +50,6 @@
 
 **要求**: 
 - 安全补丁日期 ≤ 2025-02-01
-- 已解锁 Bootloader
 - 已安装 Shizuku
 
 ## 前提条件
