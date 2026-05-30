@@ -9,14 +9,24 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-java@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
-    - uses: gradle/actions/setup-gradle@v3
-    - run: gradle assembleDebug
-    - uses: actions/upload-artifact@v4
+        
+    - name: Grant execute permission
+      run: chmod +x gradlew
+      
+    - name: Build Debug APK
+      run: ./gradlew assembleDebug
+      
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
       with:
-        name: temproot-debug
+        name: temproot-debug-apk
         path: app/build/outputs/apk/debug/*.apk
+        retention-days: 30
