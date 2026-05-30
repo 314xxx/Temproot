@@ -130,7 +130,7 @@ fun MainScreen(
         topBar = {
             TopAppBar(
                 title = { Text("TempRoot", fontWeight = FontWeight.Bold) },
-                colors = TopAppBarDefaults.topAppBarColors(
+                colors = TopAppBarDefaults.smallTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 ),
                 actions = {
