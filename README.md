@@ -18,29 +18,36 @@
 
 ### 适用机型
 
-| 设备代号 | 型号 | 备注 |
-|---------|------|------|
-| marble | Redmi K60 | ✅ 完全支持 |
-| mondrian | Redmi K60 Pro | ✅ 完全支持 |
-| socrates | Redmi K60 Ultra | ✅ 完全支持 |
-| diting | Redmi K50 | ✅ 完全支持 | 
-| munch | Redmi K50 电竞版 | ✅ 完全支持 |
-| topaz | Redmi Note 12 Turbo | ✅ 完全支持 |
-| fuxi | Xiaomi 13 | ✅ 完全支持 |
+| 设备代号 | 型号 | 发布时间 | 状态 |
+|---------|------|---------|------|
+| socrates | Redmi K60 Pro | 2022-12-27 | ✅ 完全支持 |
+| mondrian | Redmi K60 / POCO F5 Pro | 2022-12-27 | ✅ 完全支持 |
+| rembrandt | Redmi K60E | 2022-12-27 | ✅ 完全支持 |
+| rubens | Redmi K50 | 2022-03-17 | ✅ 完全支持 |
+| matisse | Redmi K50 Pro | 2022-03-17 | ✅ 完全支持 |
+| diting | Redmi K50 至尊版 / 小米12T Pro | 2022-08-11 | ✅ 完全支持 |
+| ingres | Redmi K50 电竞版 / POCO F4 GT | 2022-02-16 | ✅ 完全支持 |
+| munch | Redmi K40S / POCO F4 | 2022-03-17 | ✅ 完全支持 |
+| marble | Redmi Note 12 Turbo / POCO F5 | 2023-03-28 | ✅ 完全支持 |
+| mayfly | 小米12S | 2022-07-04 | ✅ 完全支持 |
+| fuxi | 小米13 | 2022-12-12 | ✅ 完全支持 |
 
-### MIUI 12 系列
+### 小米12 系列
 
-| 设备 | 型号 | 备注 |
-|------|------|------|
-| cupid | Xiaomi 12 | ⚠️ 需要二月补丁之前 |
-| psyche | Xiaomi 12X | ❌ 不支持 |
-| zeus | Xiaomi 12 Pro | ❌ 不支持（天玑版） |
+| 设备代号 | 型号 | 发布时间 | 状态 |
+|---------|------|---------|------|
+| cupid | 小米12 | 2021-12-28 | ⚠️ 需要二月补丁之前 |
+| psyche | 小米12X | 2021-12-28 | ❌ 不支持 |
+| zeus | 小米12 Pro | 2021-12-28 | ❌ 不支持（天玑版） |
+| daumier | 小米12 Pro 天玑版 | 2022-07-04 | ❌ 不支持 |
 
 ### 支持的处理器
 
 - 骁龙 8+ Gen 1
 - 骁龙 8 Gen 1
 - 骁龙 7+ Gen 2
+- 骁龙 870
+- 骁龙 888
 
 **其他机型请勿使用！**
 
@@ -148,6 +155,7 @@ TempRoot/
 
 - [KernelSU](https://github.com/tiann/KernelSU) - 内核级 Root 方案
 - [Shizuku](https://github.com/RikkaApps/Shizuku) - ADB Shell 权限管理
+- [Uotan Wiki](https://wiki.uotan.cn) - 小米设备代号参考
 
 ## 许可证
 
@@ -161,3 +169,4 @@ TempRoot/
 
 - 酷安原帖: https://www.coolapk.com/feed/71852731
 - KernelSU: https://github.com/tiann/KernelSU
+- 小米设备代号: https://wiki.uotan.cn/index.php?title=小米手机设备代号名称对照表
