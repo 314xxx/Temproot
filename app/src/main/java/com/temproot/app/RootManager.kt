@@ -17,8 +17,31 @@ class RootManager(private val context: Context) {
 
     private val tag = "RootManager"
     
-    // 兼容的设备列表
-    private val supportedDevices = listOf("marble", "mondrian", "mayfly", "diting", "socrates")
+    // 兼容的设备列表 (根据酷安原帖更新)
+    private val supportedDevices = listOf(
+        // K60 系列
+        "socrates",      // Redmi K60 Pro
+        "mondrian",      // Redmi K60 / POCO F5 Pro
+        "rembrandt",     // Redmi K60E
+        
+        // K50 系列
+        "rubens",        // Redmi K50
+        "matisse",       // Redmi K50 Pro
+        "diting",        // Redmi K50 至尊版 / 小米12T Pro
+        "ingres",        // Redmi K50 电竞版 / POCO F4 GT
+        
+        // K40 系列
+        "munch",         // Redmi K40S / POCO F4
+        
+        // Note 系列
+        "marble",        // Redmi Note 12 Turbo / POCO F5
+        
+        // 小米12S 系列
+        "mayfly",        // 小米12S
+        
+        // 小米13 系列
+        "fuxi"           // 小米13
+    )
     
     // 安全补丁截止日期 (2025-02-01)
     private val safePatchDate = "2025-02-01"
