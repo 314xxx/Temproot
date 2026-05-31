@@ -3,12 +3,12 @@ package com.temproot.app
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Base64
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
-import rikka.shizuku.ShizukuRemoteProcess
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -66,7 +66,7 @@ class RootManager(private val context: Context) {
 
     private suspend fun executeCommand(command: String): Pair<Int, String> = withContext(Dispatchers.IO) {
         try {
-            val process = ShizukuRemoteProcess(arrayOf("sh", "-c", command))
+            val process = Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
 
             val reader = BufferedReader(InputStreamReader(process.inputStream))
             val errorReader = BufferedReader(InputStreamReader(process.errorStream))
@@ -93,19 +93,37 @@ class RootManager(private val context: Context) {
         val files = listOf("cf", "ksud")
         files.forEach { fileName ->
             val targetPath = "/data/local/tmp/$fileName"
-            val tmpFile = java.io.File(context.cacheDir, fileName)
+
             context.assets.open(fileName).use { input ->
-                java.io.FileOutputStream(tmpFile).use { output ->
-                    input.copyTo(output)
+                val bytes = input.readBytes()
+                val base64Str = Base64.encodeToString(bytes, Base64.NO_WRAP)
+
+                val chunkSize = 1024
+                val chunks = base64Str.chunked(chunkSize)
+
+                val initCmd = "echo -n '' > $targetPath"
+                executeCommand(initCmd)
+
+                chunks.forEachIndexed { index, chunk ->
+                    val cmd = "echo -n '$chunk' >> $targetPath"
+                    val (exitCode, output) = executeCommand(cmd)
+                    if (exitCode != 0) {
+                        throw Exception("写入 $targetPath 失败 (chunk $index, exit: $exitCode): $output")
+                    }
+                }
+
+                val decodeCmd = "base64 -d $targetPath > ${targetPath}.decoded && mv ${targetPath}.decoded $targetPath"
+                val (decodeExit, decodeOutput) = executeCommand(decodeCmd)
+                if (decodeExit != 0) {
+                    throw Exception("解码 $targetPath 失败 (exit: $decodeExit): $decodeOutput")
                 }
             }
-            val (exitCode, output) = executeCommand("cp ${tmpFile.absolutePath} $targetPath")
-            tmpFile.delete()
-            if (exitCode != 0) {
-                throw Exception("写入 $targetPath 失败 (exit: $exitCode): $output")
-            }
+
             executeCommand("chmod 777 $targetPath")
             executeCommand("chown shell:shell $targetPath")
+
+            val (_, verifyOutput) = executeCommand("ls -la $targetPath")
+            Log.d(tag, "文件验证: $verifyOutput")
         }
     }
 
