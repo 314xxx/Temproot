@@ -3,14 +3,18 @@ package com.temproot.app
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
+import rikka.shizuku.ShizukuRemoteProcess
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
 class RootManager(private val context: Context) {
+
+    private val tag = "RootManager"
 
     private val supportedDevices = listOf(
         "socrates",
@@ -60,23 +64,9 @@ class RootManager(private val context: Context) {
         }
     }
 
-    @Suppress("PrivateApi")
     private suspend fun executeCommand(command: String): Pair<Int, String> = withContext(Dispatchers.IO) {
         try {
-            val process = Shizuku::class.java.getDeclaredMethod(
-                "newProcess",
-                Array<String>::class.java,
-                String::class.java,
-                String::class.java
-            ).let { method ->
-                method.isAccessible = true
-                method.invoke(
-                    null,
-                    arrayOf("sh", "-c", command),
-                    null,
-                    null
-                ) as Process
-            }
+            val process = ShizukuRemoteProcess(arrayOf("sh", "-c", command))
 
             val reader = BufferedReader(InputStreamReader(process.inputStream))
             val errorReader = BufferedReader(InputStreamReader(process.errorStream))
@@ -94,42 +84,26 @@ class RootManager(private val context: Context) {
             val exitCode = process.waitFor()
             Pair(exitCode, output.toString().trim())
         } catch (e: Exception) {
+            Log.e(tag, "executeCommand failed: ${e.message}")
             Pair(-1, "Exception: ${e.message}")
         }
     }
 
-    @Suppress("PrivateApi")
     private suspend fun prepareFiles() = withContext(Dispatchers.IO) {
         val files = listOf("cf", "ksud")
         files.forEach { fileName ->
             val targetPath = "/data/local/tmp/$fileName"
-            try {
-                val process = Shizuku::class.java.getDeclaredMethod(
-                    "newProcess",
-                    Array<String>::class.java,
-                    String::class.java,
-                    String::class.java
-                ).let { method ->
-                    method.isAccessible = true
-                    method.invoke(
-                        null,
-                        arrayOf("sh", "-c", "cat > $targetPath"),
-                        null,
-                        null
-                    ) as Process
+            val tmpFile = java.io.File(context.cacheDir, fileName)
+            context.assets.open(fileName).use { input ->
+                java.io.FileOutputStream(tmpFile).use { output ->
+                    input.copyTo(output)
                 }
-
-                context.assets.open(fileName).use { input ->
-                    process.outputStream.use { output ->
-                        input.copyTo(output)
-                    }
-                }
-
-                process.waitFor()
-            } catch (e: Exception) {
-                throw Exception("写入 $targetPath 失败: ${e.message}")
             }
-
+            val (exitCode, output) = executeCommand("cp ${tmpFile.absolutePath} $targetPath")
+            tmpFile.delete()
+            if (exitCode != 0) {
+                throw Exception("写入 $targetPath 失败 (exit: $exitCode): $output")
+            }
             executeCommand("chmod 777 $targetPath")
             executeCommand("chown shell:shell $targetPath")
         }
