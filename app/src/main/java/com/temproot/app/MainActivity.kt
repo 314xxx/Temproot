@@ -20,7 +20,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -472,7 +471,7 @@ fun RootButton(
         enabled = enabled && !isProcessing,
         modifier = Modifier
             .size(150.dp)
-            .graphicsLayer(scaleX = scale, scaleY = scale),
+            .graphicsLayer { scaleX = scale; scaleY = scale },
         shape = RoundedCornerShape(24.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = if (isProcessing) MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
@@ -497,7 +496,7 @@ fun RootButton(
                 )
             } else {
                 Icon(
-                    Icons.Default.PowerSettingsNew,
+                    Icons.Default.PlayArrow,
                     contentDescription = null,
                     modifier = Modifier.size(44.dp)
                 )

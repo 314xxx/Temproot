@@ -50,7 +50,7 @@ fun SettingsScreen(
         ) {
             // 重试次数设置
             SettingsCard(
-                icon = Icons.Default.Replay,
+                icon = Icons.Default.Refresh,
                 iconTint = MaterialTheme.colorScheme.primary,
                 title = "cf 最大重试次数",
                 subtitle = "SELinux 宽容注入的尝试次数上限。成功率较低，建议设置较高值。"
