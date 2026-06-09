@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.ParcelFileDescriptor
-import android.util.Base64
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -26,8 +25,19 @@ class RootManager(private val context: Context) {
 
     private val safePatchDate = "2026-02-01"
 
+    fun isShizukuReady(): Boolean {
+        return try {
+            Shizuku.getBinder() != null && Shizuku.pingBinder()
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     suspend fun checkEnvironment(): Result<String> = withContext(Dispatchers.IO) {
         try {
+            if (!isShizukuReady()) {
+                return@withContext Result.failure(Exception("Shizuku 服务未连接"))
+            }
             if (!checkShizukuPermission()) {
                 return@withContext Result.failure(Exception("Shizuku 权限未授予"))
             }
@@ -42,6 +52,7 @@ class RootManager(private val context: Context) {
             prepareFiles()
             return@withContext Result.success("环境检查通过: $device, Patch: $patch")
         } catch (e: Exception) {
+            Log.e(tag, "checkEnvironment error", e)
             Result.failure(e)
         }
     }
@@ -56,67 +67,64 @@ class RootManager(private val context: Context) {
 
     private fun getService(): IShizukuService {
         val binder = Shizuku.getBinder()
-            ?: throw IllegalStateException("Shizuku binder 未就绪")
+            ?: throw IllegalStateException("Shizuku 服务未连接")
         return IShizukuService.Stub.asInterface(binder)
     }
 
-    private suspend fun executeCommand(command: String): Pair<Int, String> = withContext(Dispatchers.IO) {
-        try {
-            val service = getService()
-            val remote: IRemoteProcess = service.newProcess(arrayOf("sh", "-c", command), null, null)
+    private suspend fun executeCommand(command: String): Pair<Int, String> =
+        withContext(Dispatchers.IO) {
+            try {
+                val service = getService()
+                val remote: IRemoteProcess =
+                    service.newProcess(arrayOf("sh", "-c", command), null, null)
 
-            val inputStream = ParcelFileDescriptor.AutoCloseInputStream(remote.inputStream)
-            val errorStream = ParcelFileDescriptor.AutoCloseInputStream(remote.errorStream)
-            val reader = BufferedReader(InputStreamReader(inputStream))
-            val errorReader = BufferedReader(InputStreamReader(errorStream))
+                val inputStream = ParcelFileDescriptor.AutoCloseInputStream(remote.inputStream)
+                val errorStream = ParcelFileDescriptor.AutoCloseInputStream(remote.errorStream)
+                val reader = BufferedReader(InputStreamReader(inputStream))
+                val errorReader = BufferedReader(InputStreamReader(errorStream))
 
-            val output = StringBuilder()
-            var line: String?
+                val output = StringBuilder()
+                var line: String?
 
-            while (reader.readLine().also { line = it } != null) {
-                output.append(line).append("\n")
+                while (reader.readLine().also { line = it } != null) {
+                    output.append(line).append("\n")
+                }
+                while (errorReader.readLine().also { line = it } != null) {
+                    output.append("ERROR: ").append(line).append("\n")
+                }
+
+                val exitCode = remote.waitFor()
+                inputStream.close()
+                errorStream.close()
+                Pair(exitCode, output.toString().trim())
+            } catch (e: Exception) {
+                Log.e(tag, "executeCommand failed", e)
+                Pair(-1, "Exception: ${e.message}")
             }
-            while (errorReader.readLine().also { line = it } != null) {
-                output.append("ERROR: ").append(line).append("\n")
-            }
-
-            val exitCode = remote.waitFor()
-            inputStream.close()
-            errorStream.close()
-            Pair(exitCode, output.toString().trim())
-        } catch (e: Exception) {
-            Log.e(tag, "executeCommand failed: ${e.message}")
-            Pair(-1, "Exception: ${e.message}")
         }
-    }
 
     private suspend fun prepareFiles() = withContext(Dispatchers.IO) {
         val files = listOf("cf", "ksud")
         files.forEach { fileName ->
             val targetPath = "/data/local/tmp/$fileName"
 
-            context.assets.open(fileName).use { input ->
-                val bytes = input.readBytes()
-                val base64Str = Base64.encodeToString(bytes, Base64.NO_WRAP)
+            val bytes = context.assets.open(fileName).use { it.readBytes() }
 
-                val chunkSize = 1024
-                val chunks = base64Str.chunked(chunkSize)
+            val service = getService()
+            val remote: IRemoteProcess = service.newProcess(
+                arrayOf("sh", "-c", "cat > $targetPath"),
+                null,
+                null
+            )
 
-                executeCommand("echo -n '' > $targetPath")
+            val os = ParcelFileDescriptor.AutoCloseOutputStream(remote.outputStream)
+            os.write(bytes)
+            os.flush()
+            os.close()
 
-                chunks.forEachIndexed { index, chunk ->
-                    val (exitCode, output) = executeCommand("echo -n '$chunk' >> $targetPath")
-                    if (exitCode != 0) {
-                        throw Exception("写入 $targetPath 失败 (chunk $index, exit: $exitCode): $output")
-                    }
-                }
-
-                val (decodeExit, decodeOutput) = executeCommand(
-                    "base64 -d $targetPath > ${targetPath}.decoded && mv ${targetPath}.decoded $targetPath"
-                )
-                if (decodeExit != 0) {
-                    throw Exception("解码 $targetPath 失败 (exit: $decodeExit): $decodeOutput")
-                }
+            val exitCode = remote.waitFor()
+            if (exitCode != 0) {
+                throw Exception("写入 $targetPath 失败 (exit: $exitCode)")
             }
 
             executeCommand("chmod 777 $targetPath")
@@ -129,8 +137,7 @@ class RootManager(private val context: Context) {
         onLog: (String) -> Unit,
         onStatusUpdate: (String) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
-        onLog("=== 开始执行 SELinux 宽容注入 (cf) ===")
-        onLog("提示：此过程可能需要多次尝试，请耐心等待")
+        onLog("=== 开始 SELinux 宽容注入 ===")
 
         var count = 0
 
@@ -138,41 +145,42 @@ class RootManager(private val context: Context) {
             count++
             onStatusUpdate("尝试 $count/$maxRetries")
 
-            val cmd = "cd /data/local/tmp && export SELINUX_VIRTUAL=0xffffffc00aa42b90 && ./cf"
+            val cmd =
+                "cd /data/local/tmp && export SELINUX_VIRTUAL=0xffffffc00aa42b90 && ./cf"
             val (exitCode, output) = executeCommand(cmd)
-            onLog("[尝试 $count] cf 执行完成 (exit: $exitCode)")
+            onLog("[#$count] cf 执行完成 (exit: $exitCode)")
 
             val (_, statusOutput) = executeCommand("getenforce")
             val currentStatus = statusOutput.trim()
-            onLog("[尝试 $count] SELinux: $currentStatus")
+            onLog("[#$count] SELinux: $currentStatus")
 
             if (currentStatus.equals("Permissive", ignoreCase = true)) {
                 onLog("")
                 onLog("================================")
-                onLog("✅ SELinux 宽容成功！")
-                onLog("总尝试次数: $count")
+                onLog("SELinux 宽容成功！总尝试: $count 次")
                 onLog("================================")
                 return@withContext true
             }
 
             if (output.contains("ERROR") || output.contains("Exception")) {
-                onLog("[尝试 $count] 执行出错: $output")
+                onLog("[#$count] 出错: $output")
             }
 
             delay(1000)
         }
 
-        onLog("❌ 达到最大重试次数 ($maxRetries)，SELinux 宽容失败")
+        onLog("达到最大重试次数 ($maxRetries)，SELinux 宽容失败")
         false
     }
 
     suspend fun injectKSUD(onLog: (String) -> Unit): Boolean = withContext(Dispatchers.IO) {
-        onLog("=== 开始执行 MQSAS 服务注入 (ksud) ===")
+        onLog("=== 开始 MQSAS 服务注入 ===")
 
-        val cmd = "service call miui.mqsas.IMQSNative 21 i32 1 s16 '/data/local/tmp/ksud' i32 1 s16 'late-load' s16 '/sdcard/ksulog.txt' i32 600"
+        val cmd =
+            "service call miui.mqsas.IMQSNative 21 i32 1 s16 '/data/local/tmp/ksud' i32 1 s16 'late-load' s16 '/sdcard/ksulog.txt' i32 600"
 
         val (exitCode, output) = executeCommand(cmd)
-        onLog("命令执行结果 (exit: $exitCode)")
+        onLog("执行结果 (exit: $exitCode)")
         onLog("输出: $output")
 
         delay(2000)
@@ -181,27 +189,43 @@ class RootManager(private val context: Context) {
         val isRunning = psOutput.contains("ksud")
 
         if (isRunning) {
-            onLog("✅ ksud 进程已成功启动")
-            onLog("请查看 /sdcard/ksulog.txt 获取详细日志")
+            onLog("ksud 进程已成功启动")
+            onLog("日志: /sdcard/ksulog.txt")
             return@withContext true
         } else {
-            onLog("⚠️ ksud 进程未检测到，但注入命令已执行")
-            onLog("请检查 /sdcard/ksulog.txt 或手动验证 Root 状态")
+            onLog("ksud 进程未检测到，注入命令已执行")
+            onLog("请检查 /sdcard/ksulog.txt 或手动验证 Root")
             return@withContext false
         }
     }
 
     suspend fun checkRootStatus(): Map<String, String> = withContext(Dispatchers.IO) {
-        val status = mutableMapOf<String, String>()
+        val status = mutableMapOf(
+            "selinux" to "未知",
+            "ksud_running" to "未知",
+            "root_available" to "未知"
+        )
 
-        val (_, selinux) = executeCommand("getenforce")
-        status["selinux"] = selinux.trim()
+        if (!isShizukuReady()) {
+            return@withContext status
+        }
+        if (!checkShizukuPermission()) {
+            return@withContext status
+        }
 
-        val (_, ps) = executeCommand("ps -ef | grep ksud | grep -v grep")
-        status["ksud_running"] = if (ps.contains("ksud")) "运行中" else "未运行"
+        try {
+            val (_, selinux) = executeCommand("getenforce")
+            status["selinux"] = selinux.trim().ifEmpty { "未知" }
 
-        val (_, suTest) = executeCommand("su -c id 2>/dev/null || echo 'no_root'")
-        status["root_available"] = if (suTest.contains("uid=0")) "已获取" else "未获取"
+            val (_, ps) = executeCommand("ps -ef | grep ksud | grep -v grep")
+            status["ksud_running"] = if (ps.contains("ksud")) "运行中" else "未运行"
+
+            val (_, suTest) =
+                executeCommand("su -c id 2>/dev/null || echo 'no_root'")
+            status["root_available"] = if (suTest.contains("uid=0")) "已获取" else "未获取"
+        } catch (e: Exception) {
+            Log.e(tag, "checkRootStatus error", e)
+        }
 
         status
     }
