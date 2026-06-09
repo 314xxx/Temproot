@@ -8,7 +8,9 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import moe.shizuku.server.IShizukuService
 import rikka.shizuku.Shizuku
+import rikka.shizuku.ShizukuRemoteProcess
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -64,9 +66,17 @@ class RootManager(private val context: Context) {
         }
     }
 
+    private fun getService(): IShizukuService {
+        val binder = Shizuku.getBinder()
+            ?: throw IllegalStateException("Shizuku binder 未就绪")
+        return IShizukuService.Stub.asInterface(binder)
+    }
+
     private suspend fun executeCommand(command: String): Pair<Int, String> = withContext(Dispatchers.IO) {
         try {
-            val process = Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
+            val service = getService()
+            val remoteProcess = service.newProcess(arrayOf("sh", "-c", command), null, null)
+            val process = ShizukuRemoteProcess(remoteProcess)
 
             val reader = BufferedReader(InputStreamReader(process.inputStream))
             val errorReader = BufferedReader(InputStreamReader(process.errorStream))
