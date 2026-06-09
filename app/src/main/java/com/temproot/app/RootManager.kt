@@ -3,14 +3,15 @@ package com.temproot.app
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.util.Base64
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import moe.shizuku.server.IRemoteProcess
 import moe.shizuku.server.IShizukuService
 import rikka.shizuku.Shizuku
-import rikka.shizuku.ShizukuRemoteProcess
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -19,17 +20,8 @@ class RootManager(private val context: Context) {
     private val tag = "RootManager"
 
     private val supportedDevices = listOf(
-        "socrates",
-        "mondrian",
-        "rembrandt",
-        "rubens",
-        "matisse",
-        "diting",
-        "ingres",
-        "munch",
-        "marble",
-        "mayfly",
-        "fuxi"
+        "socrates", "mondrian", "rembrandt", "rubens", "matisse",
+        "diting", "ingres", "munch", "marble", "mayfly", "fuxi"
     )
 
     private val safePatchDate = "2026-02-01"
@@ -39,19 +31,15 @@ class RootManager(private val context: Context) {
             if (!checkShizukuPermission()) {
                 return@withContext Result.failure(Exception("Shizuku 权限未授予"))
             }
-
             val device = Build.DEVICE ?: "unknown"
             if (!supportedDevices.contains(device)) {
                 return@withContext Result.failure(Exception("不支持的设备: $device"))
             }
-
             val patch = Build.VERSION.SECURITY_PATCH
             if (patch > safePatchDate) {
                 return@withContext Result.failure(Exception("安全补丁日期 ($patch) 过高，需要 <= $safePatchDate"))
             }
-
             prepareFiles()
-
             return@withContext Result.success("环境检查通过: $device, Patch: $patch")
         } catch (e: Exception) {
             Result.failure(e)
@@ -75,11 +63,12 @@ class RootManager(private val context: Context) {
     private suspend fun executeCommand(command: String): Pair<Int, String> = withContext(Dispatchers.IO) {
         try {
             val service = getService()
-            val remoteProcess = service.newProcess(arrayOf("sh", "-c", command), null, null)
-            val process = ShizukuRemoteProcess(remoteProcess)
+            val remote: IRemoteProcess = service.newProcess(arrayOf("sh", "-c", command), null, null)
 
-            val reader = BufferedReader(InputStreamReader(process.inputStream))
-            val errorReader = BufferedReader(InputStreamReader(process.errorStream))
+            val inputStream = ParcelFileDescriptor.AutoCloseInputStream(remote.inputStream)
+            val errorStream = ParcelFileDescriptor.AutoCloseInputStream(remote.errorStream)
+            val reader = BufferedReader(InputStreamReader(inputStream))
+            val errorReader = BufferedReader(InputStreamReader(errorStream))
 
             val output = StringBuilder()
             var line: String?
@@ -91,7 +80,9 @@ class RootManager(private val context: Context) {
                 output.append("ERROR: ").append(line).append("\n")
             }
 
-            val exitCode = process.waitFor()
+            val exitCode = remote.waitFor()
+            inputStream.close()
+            errorStream.close()
             Pair(exitCode, output.toString().trim())
         } catch (e: Exception) {
             Log.e(tag, "executeCommand failed: ${e.message}")
@@ -111,19 +102,18 @@ class RootManager(private val context: Context) {
                 val chunkSize = 1024
                 val chunks = base64Str.chunked(chunkSize)
 
-                val initCmd = "echo -n '' > $targetPath"
-                executeCommand(initCmd)
+                executeCommand("echo -n '' > $targetPath")
 
                 chunks.forEachIndexed { index, chunk ->
-                    val cmd = "echo -n '$chunk' >> $targetPath"
-                    val (exitCode, output) = executeCommand(cmd)
+                    val (exitCode, output) = executeCommand("echo -n '$chunk' >> $targetPath")
                     if (exitCode != 0) {
                         throw Exception("写入 $targetPath 失败 (chunk $index, exit: $exitCode): $output")
                     }
                 }
 
-                val decodeCmd = "base64 -d $targetPath > ${targetPath}.decoded && mv ${targetPath}.decoded $targetPath"
-                val (decodeExit, decodeOutput) = executeCommand(decodeCmd)
+                val (decodeExit, decodeOutput) = executeCommand(
+                    "base64 -d $targetPath > ${targetPath}.decoded && mv ${targetPath}.decoded $targetPath"
+                )
                 if (decodeExit != 0) {
                     throw Exception("解码 $targetPath 失败 (exit: $decodeExit): $decodeOutput")
                 }
@@ -131,9 +121,6 @@ class RootManager(private val context: Context) {
 
             executeCommand("chmod 777 $targetPath")
             executeCommand("chown shell:shell $targetPath")
-
-            val (_, verifyOutput) = executeCommand("ls -la $targetPath")
-            Log.d(tag, "文件验证: $verifyOutput")
         }
     }
 
@@ -152,7 +139,6 @@ class RootManager(private val context: Context) {
             onStatusUpdate("尝试 $count/$maxRetries")
 
             val cmd = "cd /data/local/tmp && export SELINUX_VIRTUAL=0xffffffc00aa42b90 && ./cf"
-
             val (exitCode, output) = executeCommand(cmd)
             onLog("[尝试 $count] cf 执行完成 (exit: $exitCode)")
 
