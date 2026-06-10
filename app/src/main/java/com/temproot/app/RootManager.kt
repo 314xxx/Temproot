@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.util.Base64
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -108,27 +109,39 @@ class RootManager(private val context: Context) {
         files.forEach { fileName ->
             val targetPath = "/data/local/tmp/$fileName"
 
+            // 先清空目标文件
+            executeCommand("> $targetPath")
+
+            // 读取文件并 base64 编码，分段传输
             val bytes = context.assets.open(fileName).use { it.readBytes() }
+            val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
 
-            val service = getService()
-            val remote: IRemoteProcess = service.newProcess(
-                arrayOf("sh", "-c", "cat > $targetPath"),
-                null,
-                null
-            )
-
-            val os = ParcelFileDescriptor.AutoCloseOutputStream(remote.outputStream)
-            os.write(bytes)
-            os.flush()
-            os.close()
-
-            val exitCode = remote.waitFor()
-            if (exitCode != 0) {
-                throw Exception("写入 $targetPath 失败 (exit: $exitCode)")
+            // 分段传输，每段 512KB 的 base64 字符串
+            val chunkSize = 512 * 1024
+            var offset = 0
+            while (offset < base64.length) {
+                val end = minOf(offset + chunkSize, base64.length)
+                val chunk = base64.substring(offset, end)
+                // 使用 printf 追加写入，避免管道问题
+                val (exitCode, output) = executeCommand(
+                    "printf '%s' '$chunk' | base64 -d >> $targetPath"
+                )
+                if (exitCode != 0) {
+                    throw Exception("传输 $fileName 分段失败 (exit: $exitCode, output: $output)")
+                }
+                offset = end
             }
 
+            // 设置权限
             executeCommand("chmod 777 $targetPath")
             executeCommand("chown shell:shell $targetPath")
+
+            // 验证文件大小
+            val (_, sizeOutput) = executeCommand("stat -c %s $targetPath 2>/dev/null || wc -c < $targetPath")
+            val fileSize = sizeOutput.trim().toLongOrNull() ?: 0L
+            if (fileSize != bytes.size.toLong()) {
+                throw Exception("$fileName 文件大小不匹配: 期望 ${bytes.size}, 实际 $fileSize")
+            }
         }
     }
 
