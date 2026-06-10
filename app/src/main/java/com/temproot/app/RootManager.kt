@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.ParcelFileDescriptor
-import android.util.Base64
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -13,6 +12,7 @@ import moe.shizuku.server.IRemoteProcess
 import moe.shizuku.server.IShizukuService
 import rikka.shizuku.Shizuku
 import java.io.BufferedReader
+import java.io.DataOutputStream
 import java.io.InputStreamReader
 
 class RootManager(private val context: Context) {
@@ -108,28 +108,42 @@ class RootManager(private val context: Context) {
         val files = listOf("cf", "ksud")
         files.forEach { fileName ->
             val targetPath = "/data/local/tmp/$fileName"
-
-            // 先清空目标文件
-            executeCommand("> $targetPath")
-
-            // 读取文件并 base64 编码，分段传输
             val bytes = context.assets.open(fileName).use { it.readBytes() }
-            val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
 
-            // 分段传输，每段 512KB 的 base64 字符串
-            val chunkSize = 512 * 1024
-            var offset = 0
-            while (offset < base64.length) {
-                val end = minOf(offset + chunkSize, base64.length)
-                val chunk = base64.substring(offset, end)
-                // 使用 printf 追加写入，避免管道问题
-                val (exitCode, output) = executeCommand(
-                    "printf '%s' '$chunk' | base64 -d >> $targetPath"
+            val service = getService()
+            val remote: IRemoteProcess = service.newProcess(
+                arrayOf("sh", "-c", "cat > $targetPath"),
+                null,
+                null
+            )
+
+            var os: DataOutputStream? = null
+            try {
+                os = DataOutputStream(
+                    ParcelFileDescriptor.AutoCloseOutputStream(remote.outputStream)
                 )
-                if (exitCode != 0) {
-                    throw Exception("传输 $fileName 分段失败 (exit: $exitCode, output: $output)")
+                // 分块写入，避免一次性写入过大导致缓冲区问题
+                val bufferSize = 8192
+                var offset = 0
+                while (offset < bytes.size) {
+                    val length = minOf(bufferSize, bytes.size - offset)
+                    os.write(bytes, offset, length)
+                    os.flush()
+                    offset += length
                 }
-                offset = end
+                // 关闭输出流，发送 EOF 给 cat
+                os.close()
+                os = null
+            } catch (e: Exception) {
+                Log.e(tag, "写入 $targetPath 时出错", e)
+                try { os?.close() } catch (_: Exception) {}
+                try { remote.destroy() } catch (_: Exception) {}
+                throw Exception("写入 $targetPath 失败: ${e.message}")
+            }
+
+            val exitCode = remote.waitFor()
+            if (exitCode != 0) {
+                throw Exception("写入 $targetPath 失败 (exit: $exitCode)")
             }
 
             // 设置权限
