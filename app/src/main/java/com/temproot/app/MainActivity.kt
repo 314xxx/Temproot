@@ -56,8 +56,20 @@ class MainActivity : ComponentActivity() {
         Shizuku.addBinderDeadListener(binderDeadListener)
         Shizuku.addRequestPermissionResultListener(requestPermissionResultListener)
 
-        shizukuReady.value = Shizuku.getBinder() != null && Shizuku.pingBinder()
-        shizukuPermission.value = Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        shizukuReady.value = try {
+            Shizuku.getBinder() != null && Shizuku.pingBinder()
+        } catch (_: Exception) {
+            false
+        }
+        shizukuPermission.value = if (shizukuReady.value) {
+            try {
+                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+            } catch (_: Exception) {
+                false
+            }
+        } else {
+            false
+        }
 
         setContent {
             TempRootAppTheme {
@@ -72,7 +84,11 @@ class MainActivity : ComponentActivity() {
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
         shizukuReady.value = true
-        shizukuPermission.value = Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        shizukuPermission.value = try {
+            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
