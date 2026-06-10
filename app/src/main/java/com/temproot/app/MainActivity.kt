@@ -160,7 +160,7 @@ fun MainScreen(
     }
 
     Scaffold(
-        backgroundColor = MaterialTheme.colorScheme.background,
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = {

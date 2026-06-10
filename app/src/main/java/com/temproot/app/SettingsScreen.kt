@@ -26,7 +26,7 @@ fun SettingsScreen(
     var retriesText by remember { mutableStateOf(maxRetries.toString()) }
 
     Scaffold(
-        backgroundColor = MaterialTheme.colorScheme.background,
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = { Text("设置", fontWeight = FontWeight.SemiBold) },
