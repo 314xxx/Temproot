@@ -12,7 +12,7 @@ import moe.shizuku.server.IRemoteProcess
 import moe.shizuku.server.IShizukuService
 import rikka.shizuku.Shizuku
 import java.io.BufferedReader
-import java.io.DataOutputStream
+import java.io.File
 import java.io.InputStreamReader
 
 class RootManager(private val context: Context) {
@@ -108,8 +108,49 @@ class RootManager(private val context: Context) {
         val files = listOf("cf", "ksud")
         files.forEach { fileName ->
             val targetPath = "/data/local/tmp/$fileName"
-            val bytes = context.assets.open(fileName).use { it.readBytes() }
 
+            // 1. 从 assets 提取到应用外部存储目录（shell 可访问）
+            val tempDir = context.getExternalFilesDir(null)
+                ?: throw Exception("无法访问外部存储目录")
+            val tempFile = File(tempDir, fileName)
+            context.assets.open(fileName).use { input ->
+                tempFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+
+            // 2. 使用 cp 复制到目标路径（与参考脚本相同的方式）
+            val sourcePath = tempFile.absolutePath
+            val (cpExit, cpOutput) = executeCommand("cp -f '$sourcePath' '$targetPath'")
+            if (cpExit != 0) {
+                // cp 失败时，尝试通过 cat 管道传输
+                Log.w(tag, "cp 失败 (exit: $cpExit), 尝试 cat 管道: $cpOutput")
+                transferViaPipe(fileName, targetPath)
+            }
+
+            // 3. 设置权限
+            executeCommand("chmod 777 $targetPath")
+            executeCommand("chown shell:shell $targetPath")
+
+            // 4. 验证文件大小
+            val expectedSize = tempFile.length()
+            val (_, sizeOutput) = executeCommand("stat -c %s $targetPath 2>/dev/null || wc -c < $targetPath")
+            val fileSize = sizeOutput.trim().toLongOrNull() ?: 0L
+            if (fileSize != expectedSize) {
+                throw Exception("$fileName 文件大小不匹配: 期望 $expectedSize, 实际 $fileSize")
+            }
+
+            // 5. 清理临时文件
+            tempFile.delete()
+        }
+    }
+
+    /**
+     * 通过 cat stdin 管道传输文件（cp 不可用时的备用方案）
+     */
+    private suspend fun transferViaPipe(fileName: String, targetPath: String) =
+        withContext(Dispatchers.IO) {
+            val bytes = context.assets.open(fileName).use { it.readBytes() }
             val service = getService()
             val remote: IRemoteProcess = service.newProcess(
                 arrayOf("sh", "-c", "cat > $targetPath"),
@@ -117,47 +158,28 @@ class RootManager(private val context: Context) {
                 null
             )
 
-            var os: DataOutputStream? = null
             try {
-                os = DataOutputStream(
-                    ParcelFileDescriptor.AutoCloseOutputStream(remote.outputStream)
-                )
-                // 分块写入，避免一次性写入过大导致缓冲区问题
-                val bufferSize = 8192
+                val os = ParcelFileDescriptor.AutoCloseOutputStream(remote.outputStream)
+                // 分块写入
+                val bufferSize = 4096
                 var offset = 0
                 while (offset < bytes.size) {
                     val length = minOf(bufferSize, bytes.size - offset)
                     os.write(bytes, offset, length)
-                    os.flush()
                     offset += length
                 }
-                // 关闭输出流，发送 EOF 给 cat
+                os.flush()
                 os.close()
-                os = null
             } catch (e: Exception) {
-                Log.e(tag, "写入 $targetPath 时出错", e)
-                try { os?.close() } catch (_: Exception) {}
                 try { remote.destroy() } catch (_: Exception) {}
-                throw Exception("写入 $targetPath 失败: ${e.message}")
+                throw Exception("管道传输 $fileName 失败: ${e.message}")
             }
 
             val exitCode = remote.waitFor()
             if (exitCode != 0) {
-                throw Exception("写入 $targetPath 失败 (exit: $exitCode)")
-            }
-
-            // 设置权限
-            executeCommand("chmod 777 $targetPath")
-            executeCommand("chown shell:shell $targetPath")
-
-            // 验证文件大小
-            val (_, sizeOutput) = executeCommand("stat -c %s $targetPath 2>/dev/null || wc -c < $targetPath")
-            val fileSize = sizeOutput.trim().toLongOrNull() ?: 0L
-            if (fileSize != bytes.size.toLong()) {
-                throw Exception("$fileName 文件大小不匹配: 期望 ${bytes.size}, 实际 $fileSize")
+                throw Exception("管道传输 $fileName 失败 (exit: $exitCode)")
             }
         }
-    }
 
     suspend fun setSELinuxPermissive(
         maxRetries: Int = 50,
