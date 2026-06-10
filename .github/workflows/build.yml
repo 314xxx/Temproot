@@ -24,31 +24,38 @@ jobs:
     - name: Grant execute permission
       run: chmod +x gradlew
 
-    - name: Verify Gradle wrapper
-      run: |
-        echo "Gradle wrapper properties:"
-        cat gradle/wrapper/gradle-wrapper.properties
-        echo ""
-        echo "Gradle wrapper JAR:"
-        ls -la gradle/wrapper/gradle-wrapper.jar
-        echo ""
-        echo "Java version:"
-        java -version
-
     - name: Build Debug APK
-      run: ./gradlew assembleDebug --stacktrace 2>&1 | tee build-output.log
+      run: ./gradlew assembleDebug --stacktrace
 
-    - name: Upload build log on failure
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-log
-        path: build-output.log
+    - name: Rename APK
+      run: |
+        mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/TempRoot-debug.apk || true
 
-    - name: Upload APK
-      if: success()
+    - name: Upload APK artifact
       uses: actions/upload-artifact@v4
       with:
         name: temproot-debug-apk
         path: app/build/outputs/apk/debug/*.apk
         retention-days: 30
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v1.0.${{ github.run_number }}
+        name: TempRoot v1.0.${{ github.run_number }}
+        body: |
+          TempRoot 一键临时 Root 工具
+
+          **功能：**
+          - 基于 KernelSU late-load 注入
+          - 通过 Shizuku 执行 Shell 命令
+          - 支持 HyperOS/MIUI 特定机型
+
+          **使用方法：**
+          1. 安装并启动 Shizuku
+          2. 安装本 APK
+          3. 授予 Shizuku 权限
+          4. 点击一键 Root
+
+          **注意：** 临时 Root，重启后失效
+        files: app/build/outputs/apk/debug/*.apk
