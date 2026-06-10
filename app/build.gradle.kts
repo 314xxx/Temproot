@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.temproot.app"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.temproot.app"
