@@ -160,7 +160,7 @@ fun MainScreen(
     }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        backgroundColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = {
@@ -179,10 +179,8 @@ fun MainScreen(
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface
-                ),
+                backgroundColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface,
                 actions = {
                     IconButton(onClick = {
                         if (!isProcessing) {
@@ -318,9 +316,7 @@ fun MainScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 8.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer
-                    ),
+                    backgroundColor = MaterialTheme.colorScheme.errorContainer,
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Row(
@@ -359,9 +355,7 @@ fun MainScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF1C1C1E)
-                ),
+                backgroundColor = Color(0xFF1C1C1E),
                 shape = RoundedCornerShape(12.dp)
             ) {
                 if (logs.isEmpty()) {
@@ -419,7 +413,7 @@ fun ShizukuStatusBar(ready: Boolean, permission: Boolean) {
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = bgColor),
+        backgroundColor = bgColor,
         shape = RoundedCornerShape(12.dp)
     ) {
         Row(
@@ -474,17 +468,12 @@ fun RootButton(
             .graphicsLayer { scaleX = scale; scaleY = scale },
         shape = RoundedCornerShape(24.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (isProcessing) MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+            backgroundColor = if (isProcessing) MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
             else if (!enabled) MaterialTheme.colorScheme.surfaceVariant
             else MaterialTheme.colorScheme.primary,
             contentColor = Color.White,
-            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+            disabledBackgroundColor = MaterialTheme.colorScheme.surfaceVariant,
             disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-        ),
-        elevation = ButtonDefaults.buttonElevation(
-            defaultElevation = 4.dp,
-            pressedElevation = 8.dp,
-            disabledElevation = 1.dp
         )
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -520,9 +509,9 @@ fun StatusCard(status: Map<String, String>, isLoading: Boolean) {
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = bgColor),
+        backgroundColor = bgColor,
         shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = 1.dp
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
@@ -592,9 +581,9 @@ fun StatusItem(label: String, value: String) {
 fun DeviceInfoCard() {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        backgroundColor = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = 1.dp
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(

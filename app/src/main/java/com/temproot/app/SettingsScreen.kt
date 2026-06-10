@@ -26,7 +26,7 @@ fun SettingsScreen(
     var retriesText by remember { mutableStateOf(maxRetries.toString()) }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        backgroundColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = { Text("设置", fontWeight = FontWeight.SemiBold) },
@@ -35,10 +35,8 @@ fun SettingsScreen(
                         Icon(Icons.Default.ArrowBack, "返回")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface
-                )
+                backgroundColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface
             )
         }
     ) { paddingValues ->
@@ -97,9 +95,7 @@ fun SettingsScreen(
             // 安全提示
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer
-                ),
+                backgroundColor = MaterialTheme.colorScheme.errorContainer,
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Row(modifier = Modifier.padding(16.dp)) {
@@ -141,8 +137,8 @@ fun SettingsCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        backgroundColor = MaterialTheme.colorScheme.surface,
+        elevation = 1.dp
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
