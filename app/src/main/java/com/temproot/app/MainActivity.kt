@@ -179,8 +179,10 @@ fun MainScreen(
                         )
                     }
                 },
-                backgroundColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.onSurface,
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
+                ),
                 actions = {
                     IconButton(onClick = {
                         if (!isProcessing) {
@@ -316,7 +318,7 @@ fun MainScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 8.dp),
-                    backgroundColor = MaterialTheme.colorScheme.errorContainer,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Row(
@@ -355,7 +357,7 @@ fun MainScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
-                backgroundColor = Color(0xFF1C1C1E),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1C1C1E)),
                 shape = RoundedCornerShape(12.dp)
             ) {
                 if (logs.isEmpty()) {
@@ -413,7 +415,7 @@ fun ShizukuStatusBar(ready: Boolean, permission: Boolean) {
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        backgroundColor = bgColor,
+        colors = CardDefaults.cardColors(containerColor = bgColor),
         shape = RoundedCornerShape(12.dp)
     ) {
         Row(
@@ -449,14 +451,15 @@ fun RootButton(
     enabled: Boolean,
     onClick: () -> Unit
 ) {
-    val infiniteTransition = rememberInfiniteTransition()
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val scale by infiniteTransition.animateFloat(
         initialValue = 1f,
         targetValue = if (isProcessing) 1.05f else 1f,
         animationSpec = infiniteRepeatable(
             animation = tween(800, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
-        )
+        ),
+        label = "scale"
     )
 
     Button(
@@ -466,12 +469,13 @@ fun RootButton(
             .size(150.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale },
         shape = RoundedCornerShape(24.dp),
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp),
         colors = ButtonDefaults.buttonColors(
-            backgroundColor = if (isProcessing) MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+            containerColor = if (isProcessing) MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
             else if (!enabled) MaterialTheme.colorScheme.surfaceVariant
             else MaterialTheme.colorScheme.primary,
             contentColor = Color.White,
-            disabledBackgroundColor = MaterialTheme.colorScheme.surfaceVariant,
+            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
             disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
         )
     ) {
@@ -508,9 +512,9 @@ fun StatusCard(status: Map<String, String>, isLoading: Boolean) {
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        backgroundColor = bgColor,
+        colors = CardDefaults.cardColors(containerColor = bgColor),
         shape = RoundedCornerShape(16.dp),
-        elevation = 1.dp
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
@@ -580,9 +584,9 @@ fun StatusItem(label: String, value: String) {
 fun DeviceInfoCard() {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        backgroundColor = MaterialTheme.colorScheme.surface,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(16.dp),
-        elevation = 1.dp
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(

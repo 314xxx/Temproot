@@ -21,7 +21,7 @@ jobs:
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
       with:
-        gradle-version: '7.5'
+        gradle-version: '8.0'
       
     - name: Grant execute permission
       run: chmod +x gradlew
