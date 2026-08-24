@@ -34,28 +34,39 @@ class PairingReplyReceiver : BroadcastReceiver() {
 
         // 全局 scope（非 goAsync）：不受 receiver 10 秒限制，PairingService 保活进程
         receiverScope.launch {
-            PairingNotifier.showPairingProgress(appContext, port)
+            try {
+                PairingNotifier.showPairingProgress(appContext, port)
 
-            val paired = AdbShell.pair(code, port)
-            if (paired.isFailure) {
+                val paired = AdbShell.pair(code, port)
+                if (paired.isFailure) {
+                    PairingNotifier.showResult(
+                        appContext, false,
+                        "配对失败: ${paired.exceptionOrNull()?.message}"
+                    )
+                    return@launch
+                }
+
+                // 配对成功，自动发现连接端口并连接
+                //（若对话框路径已连上，AdbShell.connect 内部 tryLock 会立即返回，
+                // 不会与进行中的连接流程打架）
+                val connected = AdbShell.connect()
                 PairingNotifier.showResult(
-                    appContext, false,
-                    "配对失败: ${paired.exceptionOrNull()?.message}"
+                    appContext, true,
+                    if (connected.isSuccess) "配对成功，ADB 已连接，可回到应用执行一键 Root"
+                    else "配对成功，但连接失败: ${connected.exceptionOrNull()?.message}"
                 )
-                return@launch
+                // 配对流程结束，停止监听服务
+                PairingService.stop(appContext)
+            } catch (t: Throwable) {
+                // 安全网：任何异常转为通知反馈，绝不让其逃逸导致闪退
+                runCatching {
+                    PairingNotifier.showResult(
+                        appContext, false,
+                        "发生错误: ${t.message ?: t.javaClass.simpleName}"
+                    )
+                }
+                runCatching { PairingService.stop(appContext) }
             }
-
-            // 配对成功，自动发现连接端口并连接
-            //（若对话框路径已连上，AdbShell.connect 内部 tryLock 会立即返回，
-            // 不会与进行中的连接流程打架）
-            val connected = AdbShell.connect()
-            PairingNotifier.showResult(
-                appContext, true,
-                if (connected.isSuccess) "配对成功，ADB 已连接，可回到应用执行一键 Root"
-                else "配对成功，但连接失败: ${connected.exceptionOrNull()?.message}"
-            )
-            // 配对流程结束，停止监听服务
-            PairingService.stop(appContext)
         }
     }
 

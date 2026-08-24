@@ -212,12 +212,17 @@ fun MainScreen(
                         when {
                             adbState is AdbShell.State.Connected -> AdbShell.disconnect()
                             AdbShell.isPaired(context) -> scope.launch {
-                                currentStatus.value = "连接 ADB..."
-                                log("ℹ 开始连接 ADB...")
-                                val r = AdbShell.connect { log(it) }
-                                log(if (r.isSuccess) "✓ ADB 已连接"
-                                    else "✗ ADB 连接失败: ${r.exceptionOrNull()?.message}")
-                                currentStatus.value = "空闲"
+                                try {
+                                    currentStatus.value = "连接 ADB..."
+                                    log("ℹ 开始连接 ADB...")
+                                    val r = AdbShell.connect { log(it) }
+                                    log(if (r.isSuccess) "✓ ADB 已连接"
+                                        else "✗ ADB 连接失败: ${r.exceptionOrNull()?.message}")
+                                } catch (t: Throwable) {
+                                    log("✗ 连接发生错误: ${t.message ?: t.javaClass.simpleName}")
+                                } finally {
+                                    currentStatus.value = "空闲"
+                                }
                             }
                             else -> context.startActivity(
                                 Intent(context, PairingDialogActivity::class.java)

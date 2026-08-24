@@ -294,23 +294,29 @@ fun PairingDialogScreen(initialPort: Int?, onFinished: () -> Unit) {
                             working = true
                             message = null
                             scope.launch {
-                                val result = AdbShell.pair(codeText, port)
-                                if (result.isSuccess) {
-                                    PairingNotifier.showResult(context, true, "配对成功，正在连接...")
-                                    val connected = AdbShell.connect()
-                                    working = false
-                                    if (connected.isSuccess) {
-                                        // 全部工作已完成，停止监听服务（对话框路径的收尾）
-                                        PairingService.stop(context)
-                                        onFinished()
+                                try {
+                                    val result = AdbShell.pair(codeText, port)
+                                    if (result.isSuccess) {
+                                        PairingNotifier.showResult(context, true, "配对成功，正在连接...")
+                                        val connected = AdbShell.connect()
+                                        working = false
+                                        if (connected.isSuccess) {
+                                            // 全部工作已完成，停止监听服务（对话框路径的收尾）
+                                            PairingService.stop(context)
+                                            onFinished()
+                                        } else {
+                                            message = "配对成功但连接失败: ${connected.exceptionOrNull()?.message}\n可回到应用点「连接」重试"
+                                        }
                                     } else {
-                                        message = "配对成功但连接失败: ${connected.exceptionOrNull()?.message}"
+                                        working = false
+                                        message = "配对失败: ${result.exceptionOrNull()?.message}"
+                                        // 配对弹窗可能已关闭或端口已变化，重新搜索
+                                        scanKey++
                                     }
-                                } else {
+                                } catch (t: Throwable) {
+                                    // 安全网：任何异常转为界面提示，绝不让其逃逸导致闪退
                                     working = false
-                                    message = "配对失败: ${result.exceptionOrNull()?.message}"
-                                    // 配对弹窗可能已关闭或端口已变化，重新搜索
-                                    scanKey++
+                                    message = "发生错误: ${t.message ?: t.javaClass.simpleName}"
                                 }
                             }
                         },

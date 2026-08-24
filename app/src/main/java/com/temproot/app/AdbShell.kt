@@ -6,6 +6,7 @@ import com.flyfishxu.kadb.Kadb
 import com.flyfishxu.kadb.cert.KadbCert
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -38,6 +39,10 @@ object AdbShell {
     private const val CONNECT_TIMEOUT_MS = 10_000
     private const val SOCKET_TIMEOUT_MS = 15_000
     private const val PAIR_TIMEOUT_MS = 20_000L
+
+    /** 连接自动重试（配对后 adbd 轮换端口/服务上线延迟，立即连接常失败） */
+    private const val CONNECT_ATTEMPTS = 3
+    private const val RETRY_DELAY_MS = 2_000L
 
     sealed interface State {
         data object Disconnected : State
@@ -135,6 +140,9 @@ object AdbShell {
     /**
      * 连接本机 adbd：mDNS 自动发现当前端口（无线调试每次开关端口会变，自动发现免手动更新）。
      * 发现失败时回退到上次成功连接的备用端口。
+     *
+     * 自动重试：配对刚完成时 adbd 会轮换 TLS 端口、mDNS 记录更新有延迟，
+     * 立即连接大概率打到旧端口——每次尝试都重新发现端口，失败后延迟重试。
      */
     suspend fun connect(onLog: (String) -> Unit = {}): Result<Unit> = withContext(Dispatchers.IO) {
         // tryLock：已有连接流程进行中时立即反馈，避免静默排队（"点击无反应"的元凶）
@@ -142,41 +150,53 @@ object AdbShell {
             return@withContext Result.failure(Exception("正在连接中，请稍候"))
         }
         try {
-            runCatching {
-                ensureCertLoaded()
-                val ctx = appContext ?: error("AdbShell 未初始化")
-
-                onLog("ℹ 正在搜索无线调试服务...")
-                val discovered = MdnsDiscovery.discoverPort(ctx, MdnsDiscovery.TLS_CONNECT, 8_000)
-                val port = discovered
-                    ?: getSavedPort(ctx).takeIf { it > 0 }
-                    ?: throw Exception("未发现无线调试服务\n请确认「无线调试」已开启且 Wi-Fi 已连接")
-
-                if (discovered != null) {
-                    onLog("✓ 发现无线调试端口: $discovered")
-                } else {
-                    onLog("ℹ 自动发现失败，尝试备用端口: $port")
+            var lastError: Throwable? = null
+            for (attempt in 1..CONNECT_ATTEMPTS) {
+                if (attempt > 1) {
+                    onLog("ℹ ${RETRY_DELAY_MS / 1000} 秒后重试 ($attempt/$CONNECT_ATTEMPTS)...")
+                    delay(RETRY_DELAY_MS)
                 }
+                val attemptResult = runCatching {
+                    ensureCertLoaded()
+                    val ctx = appContext ?: error("AdbShell 未初始化")
 
-                closeLocked()
-                onLog("ℹ 正在建立连接...")
-                // 显式超时：Kadb 默认值为 0（无限等待），绝不使用默认值
-                val k = Kadb.create(HOST, port, CONNECT_TIMEOUT_MS, SOCKET_TIMEOUT_MS)
-                try {
-                    val resp = k.shell("id")
-                    check(resp.exitCode == 0) { "连接验证失败: ${resp.allOutput.trim()}" }
-                } catch (e: Throwable) {
-                    runCatching { k.close() }
-                    throw e
+                    onLog("ℹ 正在搜索无线调试服务...")
+                    // 每次尝试都重新发现：端口可能在上次失败后已轮换
+                    val discovered = MdnsDiscovery.discoverPort(ctx, MdnsDiscovery.TLS_CONNECT, 8_000)
+                    val port = discovered
+                        ?: getSavedPort(ctx).takeIf { it > 0 }
+                        ?: throw Exception("未发现无线调试服务\n请确认「无线调试」已开启且 Wi-Fi 已连接")
+
+                    if (discovered != null) {
+                        onLog("✓ 发现无线调试端口: $discovered")
+                    } else {
+                        onLog("ℹ 自动发现失败，尝试备用端口: $port")
+                    }
+
+                    closeLocked()
+                    onLog("ℹ 正在建立连接...")
+                    // 显式超时：Kadb 默认值为 0（无限等待），绝不使用默认值
+                    val k = Kadb.create(HOST, port, CONNECT_TIMEOUT_MS, SOCKET_TIMEOUT_MS)
+                    try {
+                        val resp = k.shell("id")
+                        check(resp.exitCode == 0) { "连接验证失败: ${resp.allOutput.trim()}" }
+                    } catch (e: Throwable) {
+                        runCatching { k.close() }
+                        throw e
+                    }
+
+                    if (discovered != null) savePort(ctx, discovered)
+                    kadb = k
+                    _state.value = State.Connected
                 }
-
-                if (discovered != null) savePort(ctx, discovered)
-                kadb = k
-                _state.value = State.Connected
-            }.onFailure {
+                if (attemptResult.isSuccess) {
+                    return@withContext Result.success(Unit)
+                }
+                lastError = attemptResult.exceptionOrNull()
+                onLog("✗ 第 $attempt 次连接失败: ${lastError?.message}")
                 closeLocked()
-                onLog("✗ 连接失败: ${it.message}")
             }
+            Result.failure(Exception("连接失败（已重试 $CONNECT_ATTEMPTS 次）: ${lastError?.message}"))
         } finally {
             mutex.unlock()
         }
