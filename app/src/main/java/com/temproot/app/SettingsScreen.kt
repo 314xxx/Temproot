@@ -1,111 +1,170 @@
 package com.temproot.app
 
 import android.content.SharedPreferences
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     prefs: SharedPreferences,
     onBack: () -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val maxRetries = prefs.getInt(MainActivity.KEY_MAX_RETRIES, MainActivity.DEFAULT_MAX_RETRIES)
     var retriesText by remember { mutableStateOf(maxRetries.toString()) }
-    
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("设置") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, "返回")
-                    }
-                }
-            )
-        }
-    ) { paddingValues ->
+
+    var portText by remember {
+        mutableStateOf(AdbShell.getSavedPort(context).takeIf { it > 0 }?.toString() ?: "")
+    }
+    var portSaved by remember { mutableStateOf(false) }
+
+    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
-                .padding(16.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .statusBarsPadding()
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(text = "cf 最大重试次数", style = MaterialTheme.typography.titleMedium)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "SELinux 宽容注入的尝试次数上限。成功率较低，建议设置较高值。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    
+            // 顶栏
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+                }
+                Text(
+                    text = "设置",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            // ADB 连接设置
+            MiuixCard {
+                Text(text = "ADB 连接", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "「无线调试」主界面顶部显示的端口号。重新开关无线调试后端口会变化，需更新。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
-                        value = retriesText,
-                        onValueChange = { 
-                            retriesText = it
-                            it.toIntOrNull()?.let { value ->
-                                prefs.edit().putInt(MainActivity.KEY_MAX_RETRIES, value).apply()
+                        value = portText,
+                        onValueChange = {
+                            portText = it.filter { c -> c.isDigit() }.take(5)
+                            portSaved = false
+                        },
+                        label = { Text("主端口") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Button(
+                        onClick = {
+                            portText.toIntOrNull()?.let { port ->
+                                if (port in 1..65535) {
+                                    AdbShell.savePort(context, port)
+                                    portSaved = true
+                                }
                             }
                         },
-                        label = { Text("重试次数") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "推荐值: 50-100",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                        enabled = portText.toIntOrNull() in 1..65535 && !portSaved,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.height(52.dp)
+                    ) {
+                        Text(if (portSaved) "已保存" else "保存")
+                    }
                 }
             }
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(text = "高级选项", style = MaterialTheme.typography.titleMedium)
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(text = "日志保存路径: /sdcard/ksulog.txt", style = MaterialTheme.typography.bodyMedium)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(text = "二进制文件路径: /data/local/tmp/", style = MaterialTheme.typography.bodyMedium)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "设备支持表: ${RootManager.EXTERNAL_CONFIG_PATH} (可选，优先于内置表)",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "安装 KernelSU/ReSukiSU 管理器后，ksud 将自动复用其版本",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+
+            // cf 重试次数
+            MiuixCard {
+                Text(text = "cf 最大重试次数", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "SELinux 宽容注入的尝试次数上限。成功率较低，建议设置较高值。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+                OutlinedTextField(
+                    value = retriesText,
+                    onValueChange = {
+                        retriesText = it.filter { c -> c.isDigit() }.take(3)
+                        it.toIntOrNull()?.let { value ->
+                            prefs.edit().putInt(MainActivity.KEY_MAX_RETRIES, value).apply()
+                        }
+                    },
+                    label = { Text("重试次数") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "推荐值: 50-100",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(text = "⚠️ 安全提示", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onErrorContainer)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "• 临时 Root，重启后失效\n• 仅适用于特定机型和安全补丁版本\n• 使用不当可能导致系统不稳定\n• 本应用不收集任何用户数据",
-                        color = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                }
+
+            // 路径信息
+            MiuixCard {
+                Text(text = "高级选项", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(12.dp))
+                SettingInfoRow("日志保存路径", "/sdcard/ksulog.txt")
+                SettingInfoRow("二进制文件路径", "/data/local/tmp/")
+                SettingInfoRow("ADB 密钥", "应用私有目录")
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "设备支持表: ${RootManager.EXTERNAL_CONFIG_PATH}（可选，优先于内置表）\n安装 KernelSU/ReSukiSU 管理器后，ksud 将自动复用其版本",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
+    }
+}
+
+@Composable
+private fun SettingInfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.End
+        )
     }
 }

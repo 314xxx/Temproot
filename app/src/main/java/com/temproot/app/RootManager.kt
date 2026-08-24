@@ -1,17 +1,13 @@
 package com.temproot.app
 
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import rikka.shizuku.Shizuku
-import java.io.BufferedReader
 import java.io.File
-import java.io.InputStreamReader
 
 class RootManager(private val context: Context) {
 
@@ -94,13 +90,18 @@ class RootManager(private val context: Context) {
 
     suspend fun checkEnvironment(onLog: (String) -> Unit = {}): Result<String> = withContext(Dispatchers.IO) {
         try {
-            // 阶段 1/5: Shizuku 权限
-            onLog("[1/5] 检查 Shizuku 权限...")
-            if (!checkShizukuPermission()) {
-                onLog("  ❌ Shizuku 权限未授予")
-                return@withContext Result.failure(Exception("Shizuku 权限未授予"))
+            // 阶段 1/5: ADB 连接
+            onLog("[1/5] 检查 ADB 连接...")
+            if (!AdbShell.isConnected) {
+                val connectResult = AdbShell.connect()
+                if (connectResult.isFailure) {
+                    onLog("  ❌ ADB 未连接: ${connectResult.exceptionOrNull()?.message}")
+                    onLog("  ℹ 请确认已开启无线调试并在设置中填入正确端口")
+                    return@withContext Result.failure(Exception("ADB 未连接: ${connectResult.exceptionOrNull()?.message}"))
+                }
             }
-            onLog("  ✓ Shizuku 权限正常")
+            val (_, idOut) = AdbShell.exec("id")
+            onLog("  ✓ ADB 已连接 ($idOut)")
 
             // 阶段 2/5: 设备 + 内核版本匹配
             onLog("[2/5] 检查设备与内核版本...")
@@ -159,18 +160,10 @@ class RootManager(private val context: Context) {
         }
     }
 
-    private fun checkShizukuPermission(): Boolean {
-        return try {
-            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-        } catch (e: Exception) {
-            false
-        }
-    }
-
     // 获取内核版本 (uname -r)
     suspend fun getKernelVersion(): String = withContext(Dispatchers.IO) {
         try {
-            val (_, out) = executeCommand("uname -r")
+            val (_, out) = AdbShell.exec("uname -r")
             out.trim().ifBlank { "" }
         } catch (e: Exception) {
             ""
@@ -180,7 +173,7 @@ class RootManager(private val context: Context) {
     // 查找已安装管理器提供的 libksud.so，返回其路径（未找到返回 null）
     private suspend fun findManagerKsud(): String? {
         for ((pkg, label) in KSU_MANAGERS) {
-            val (_, apkOut) = executeCommand(
+            val (_, apkOut) = AdbShell.exec(
                 "pm path $pkg 2>/dev/null | head -1 | sed 's/package://'"
             )
             val apk = apkOut.trim()
@@ -188,7 +181,7 @@ class RootManager(private val context: Context) {
 
             // native lib 目录（系统安装时自动解压）
             val libDir = apk.substringBeforeLast('/')
-            val (_, libOut) = executeCommand(
+            val (_, libOut) = AdbShell.exec(
                 "ls $libDir/lib/*/libksud.so 2>/dev/null | head -1"
             )
             val lib = libOut.trim()
@@ -200,63 +193,45 @@ class RootManager(private val context: Context) {
         return null
     }
 
-    // 使用 Shizuku 执行 Shell 命令
-    private suspend fun executeCommand(command: String): Pair<Int, String> = withContext(Dispatchers.IO) {
-        try {
-            val process = Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
-            val reader = BufferedReader(InputStreamReader(process.inputStream))
-            val errorReader = BufferedReader(InputStreamReader(process.errorStream))
-
-            val output = StringBuilder()
-            var line: String?
-
-            while (reader.readLine().also { line = it } != null) {
-                output.append(line).append("\n")
-            }
-            while (errorReader.readLine().also { line = it } != null) {
-                output.append("ERROR: ").append(line).append("\n")
-            }
-
-            val exitCode = process.waitFor()
-            Pair(exitCode, output.toString().trim())
-        } catch (e: Exception) {
-            Pair(-1, "Exception: ${e.message}")
-        }
-    }
-
     // ==================== 文件传输 ====================
 
-    // 传输文件：assets 提取到应用外部存储中转，再 cp 到 /data/local/tmp
+    // 传输文件：assets 提取到缓存目录后，通过 ADB push 直达目标路径
     // ksud 优先使用已装管理器版本（管理器升级后自动跟随，无需更新本应用）
     private suspend fun prepareFiles(managerKsud: String?, onLog: (String) -> Unit) = withContext(Dispatchers.IO) {
-        val tempDir = context.getExternalFilesDir(null)
-            ?: throw Exception("无法访问外部存储目录")
+        val tempDir = File(context.cacheDir, "payload").apply { mkdirs() }
 
         // 1. cf: 始终使用内置 assets
         val cfTemp = extractAsset("cf", tempDir)
-        copyToTarget(cfTemp.absolutePath, cfTemp.length(), "cf", onLog)
+        if (!AdbShell.push(cfTemp, "$TARGET_DIR/cf")) {
+            throw Exception("推送 cf 失败")
+        }
+        verifyFile("$TARGET_DIR/cf", cfTemp.length(), "cf", onLog)
         cfTemp.delete()
 
-        // 2. ksud: 管理器版本优先
+        // 2. ksud: 管理器版本优先（shell 身份直接 cp）
         if (managerKsud != null) {
-            val (_, statOut) = executeCommand("stat -c %s '$managerKsud' 2>/dev/null")
+            val (_, statOut) = AdbShell.exec("stat -c %s '$managerKsud' 2>/dev/null")
             val managerSize = statOut.trim().toLongOrNull()
             if (managerSize != null && managerSize > 0) {
-                copyToTarget(managerKsud, managerSize, "ksud", onLog)
+                val (cpExit, cpOut) = AdbShell.exec("cp -f '$managerKsud' '$TARGET_DIR/ksud'")
+                if (cpExit == 0) {
+                    verifyFile("$TARGET_DIR/ksud", managerSize, "ksud", onLog)
+                    return@withContext
+                }
+                onLog("  ⚠ cp 管理器 ksud 失败 ($cpOut)，回退内置版本")
             } else {
                 onLog("  ⚠ 管理器 ksud 不可读，回退内置版本")
-                val ksudTemp = extractAsset("ksud", tempDir)
-                copyToTarget(ksudTemp.absolutePath, ksudTemp.length(), "ksud", onLog)
-                ksudTemp.delete()
             }
-        } else {
-            val ksudTemp = extractAsset("ksud", tempDir)
-            copyToTarget(ksudTemp.absolutePath, ksudTemp.length(), "ksud", onLog)
-            ksudTemp.delete()
         }
+        val ksudTemp = extractAsset("ksud", tempDir)
+        if (!AdbShell.push(ksudTemp, "$TARGET_DIR/ksud")) {
+            throw Exception("推送 ksud 失败")
+        }
+        verifyFile("$TARGET_DIR/ksud", ksudTemp.length(), "ksud", onLog)
+        ksudTemp.delete()
     }
 
-    // 从 assets 提取到应用外部存储目录（shell 用户可读）
+    // 从 assets 提取到应用缓存目录
     private fun extractAsset(name: String, tempDir: File): File {
         val tempFile = File(tempDir, name)
         context.assets.open(name).use { input ->
@@ -265,25 +240,17 @@ class RootManager(private val context: Context) {
         return tempFile
     }
 
-    // cp 到目标路径 + 设置权限 + 大小校验
-    private suspend fun copyToTarget(sourcePath: String, expectedSize: Long, name: String, onLog: (String) -> Unit) {
-        val targetPath = "$TARGET_DIR/$name"
+    // 设置权限 + 大小校验
+    private suspend fun verifyFile(path: String, expectedSize: Long, name: String, onLog: (String) -> Unit) {
+        AdbShell.exec("chmod 777 $path")
+        AdbShell.exec("chown shell:shell $path")
 
-        val (cpExit, cpOut) = executeCommand("cp -f '$sourcePath' '$targetPath'")
-        if (cpExit != 0) {
-            throw Exception("复制 $name 失败 (exit: $cpExit): $cpOut")
-        }
-
-        executeCommand("chmod 777 $targetPath")
-        executeCommand("chown shell:shell $targetPath")
-
-        // 验证文件大小
-        val (_, sizeOut) = executeCommand("stat -c %s $targetPath 2>/dev/null || wc -c < $targetPath")
+        val (_, sizeOut) = AdbShell.exec("stat -c %s $path 2>/dev/null || wc -c < $path")
         val actual = sizeOut.trim().toLongOrNull() ?: -1L
         if (actual != expectedSize) {
             throw Exception("$name 大小不匹配: 期望 $expectedSize, 实际 $actual")
         }
-        onLog("  ✓ $name → $targetPath ($actual bytes)")
+        onLog("  ✓ $name → $path ($actual bytes)")
     }
 
     // ==================== Root 执行 ====================
@@ -309,11 +276,11 @@ class RootManager(private val context: Context) {
                 /data/local/tmp/cf
             """.trimIndent()
 
-            val (exitCode, output) = executeCommand(cmd)
+            val (exitCode, output) = AdbShell.exec(cmd)
             onLog("[尝试 $count] cf 执行完成 (exit: $exitCode)")
 
             // 检查 SELinux 状态
-            val (_, statusOutput) = executeCommand("getenforce")
+            val (_, statusOutput) = AdbShell.exec("getenforce")
             val currentStatus = statusOutput.trim()
             onLog("[尝试 $count] SELinux: $currentStatus")
 
@@ -347,7 +314,7 @@ class RootManager(private val context: Context) {
             service call miui.mqsas.IMQSNative 21 i32 1 s16 "/data/local/tmp/ksud" i32 1 s16 "late-load" s16 "/sdcard/ksulog.txt" i32 600
         """.trimIndent()
 
-        val (exitCode, output) = executeCommand(cmd)
+        val (exitCode, output) = AdbShell.exec(cmd)
         onLog("命令执行结果 (exit: $exitCode)")
         onLog("输出: $output")
 
@@ -355,7 +322,7 @@ class RootManager(private val context: Context) {
         delay(2000)
 
         // 检查 ksud 是否运行
-        val (_, psOutput) = executeCommand("ps -ef | grep ksud | grep -v grep")
+        val (_, psOutput) = AdbShell.exec("ps -ef | grep ksud | grep -v grep")
         val isRunning = psOutput.contains("ksud")
 
         if (isRunning) {
@@ -377,15 +344,15 @@ class RootManager(private val context: Context) {
         status["kernel"] = getKernelVersion().ifBlank { "未知" }
 
         // SELinux 状态
-        val (_, selinux) = executeCommand("getenforce")
+        val (_, selinux) = AdbShell.exec("getenforce")
         status["selinux"] = selinux.trim()
 
         // ksud 进程
-        val (_, ps) = executeCommand("ps -ef | grep ksud | grep -v grep")
+        val (_, ps) = AdbShell.exec("ps -ef | grep ksud | grep -v grep")
         status["ksud_running"] = if (ps.contains("ksud")) "运行中" else "未运行"
 
         // su 可用性
-        val (_, suTest) = executeCommand("su -c id 2>/dev/null || echo 'no_root'")
+        val (_, suTest) = AdbShell.exec("su -c id 2>/dev/null || echo 'no_root'")
         status["root_available"] = if (suTest.contains("uid=0")) "已获取" else "未获取"
 
         status

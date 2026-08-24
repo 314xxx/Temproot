@@ -1,85 +1,62 @@
 package com.temproot.app
 
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.animation.core.*
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.temproot.app.ui.theme.TempRootAppTheme
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import rikka.shizuku.Shizuku
 
 class MainActivity : ComponentActivity() {
-    
+
     companion object {
         private const val PREF_NAME = "temp_root_prefs"
         const val KEY_MAX_RETRIES = "max_retries"
         const val DEFAULT_MAX_RETRIES = 50
     }
-    
+
     private val prefs by lazy {
         getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
     }
-    
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        Shizuku.addBinderReceivedListener(binderReceivedListener)
-        Shizuku.addRequestPermissionResultListener(requestPermissionResultListener)
-        
+        AdbShell.init(this)
         setContent {
             TempRootAppTheme {
                 AppNavigation(prefs)
             }
         }
     }
-    
-    private val binderReceivedListener = Shizuku.OnBinderReceivedListener { }
-    
-    private val requestPermissionResultListener = 
-        Shizuku.OnRequestPermissionResultListener { _, grantResult ->
-            if (grantResult == PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(this, "Shizuku 权限已授予", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(this, "需要 Shizuku 权限才能执行", Toast.LENGTH_LONG).show()
-            }
-        }
-    
-    override fun onDestroy() {
-        super.onDestroy()
-        Shizuku.removeBinderReceivedListener(binderReceivedListener)
-        Shizuku.removeRequestPermissionResultListener(requestPermissionResultListener)
-    }
 }
 
 @Composable
 fun AppNavigation(prefs: android.content.SharedPreferences) {
     val navController = rememberNavController()
-    
     NavHost(navController = navController, startDestination = "main") {
         composable("main") {
             MainScreen(
@@ -96,258 +73,453 @@ fun AppNavigation(prefs: android.content.SharedPreferences) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+// ==================== Miuix 基础组件 ====================
+
+// Miuix 风格卡片：白色大圆角
+@Composable
+fun MiuixCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp
+    ) {
+        Column(modifier = Modifier.padding(20.dp), content = content)
+    }
+}
+
+// 状态指示点
+@Composable
+fun StatusDot(color: Color, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(10.dp)
+            .background(color, CircleShape)
+    )
+}
+
+// ==================== 主界面 ====================
+
 @Composable
 fun MainScreen(
     prefs: android.content.SharedPreferences,
     onNavigateToSettings: () -> Unit = {}
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val rootManager = remember { RootManager(context) }
     val scope = rememberCoroutineScope()
-    
+    val rootManager = remember { RootManager(context) }
+
+    val adbState by AdbShell.state.collectAsState()
+    val isProcessing = remember { mutableStateOf(false) }
+    val currentStatus = remember { mutableStateOf("空闲") }
+    val logs = remember { mutableStateOf(listOf<String>()) }
+    val showPairingDialog = remember { mutableStateOf(false) }
+
+    fun log(msg: String) {
+        logs.value = logs.value + msg
+    }
+
     val maxRetries = prefs.getInt(MainActivity.KEY_MAX_RETRIES, MainActivity.DEFAULT_MAX_RETRIES)
-    
-    var isProcessing by remember { mutableStateOf(false) }
-    var logs by remember { mutableStateOf(listOf<String>()) }
-    var currentStatus by remember { mutableStateOf("就绪") }
-    var rootStatus by remember { mutableStateOf(mapOf<String, String>()) }
-    var environmentCheck by remember { mutableStateOf<String?>(null) }
-    
-    val listState = rememberLazyListState()
-    
-    LaunchedEffect(logs.size) {
-        if (logs.isNotEmpty()) {
-            listState.animateScrollToItem(logs.size - 1)
-        }
-    }
-    
-    LaunchedEffect(Unit) {
-        rootStatus = rootManager.checkRootStatus()
-    }
-    
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("TempRoot", fontWeight = FontWeight.Bold) },
-                colors = TopAppBarDefaults.smallTopAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                ),
-                actions = {
-                    IconButton(onClick = {
-                        scope.launch { rootStatus = rootManager.checkRootStatus() }
-                    }) {
-                        Icon(Icons.Default.Refresh, "刷新")
-                    }
-                    IconButton(onClick = onNavigateToSettings) {
-                        Icon(Icons.Default.Settings, "设置")
-                    }
-                }
-            )
-        }
-    ) { paddingValues ->
+
+    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
-                .padding(16.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .statusBarsPadding()
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            StatusCard(rootStatus)
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            DeviceInfoCard(rootStatus)
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            Box(
-                modifier = Modifier.fillMaxWidth(),
-                contentAlignment = Alignment.Center
+            // ===== 顶栏 =====
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "TempRoot",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = "一键临时 Root · 重启即失效",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = onNavigateToSettings) {
+                    Icon(Icons.Rounded.Settings, contentDescription = "设置")
+                }
+            }
+
+            // ===== ADB 连接状态卡 =====
+            MiuixCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    StatusDot(
+                        color = if (adbState is AdbShell.State.Connected)
+                            Color(0xFF34C759) else Color(0xFFBDBDC6)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (adbState is AdbShell.State.Connected) "ADB 已连接" else "ADB 未连接",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = when {
+                                adbState is AdbShell.State.Connected ->
+                                    "端口 ${AdbShell.getSavedPort(context)} · shell 权限就绪"
+                                AdbShell.getSavedPort(context) > 0 ->
+                                    "点击连接 · 端口 ${AdbShell.getSavedPort(context)}"
+                                else -> "无线调试自配对 · 无需 Shizuku"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    TextButton(onClick = {
+                        if (adbState is AdbShell.State.Connected) {
+                            AdbShell.disconnect()
+                        } else if (AdbShell.getSavedPort(context) > 0) {
+                            scope.launch {
+                                currentStatus.value = "连接 ADB..."
+                                val r = AdbShell.connect()
+                                log(if (r.isSuccess) "✓ ADB 连接成功" else "✗ ADB 连接失败: ${r.exceptionOrNull()?.message}")
+                                currentStatus.value = "空闲"
+                            }
+                        } else {
+                            showPairingDialog.value = true
+                        }
+                    }) {
+                        Text(
+                            text = when {
+                                adbState is AdbShell.State.Connected -> "断开"
+                                AdbShell.getSavedPort(context) > 0 -> "连接"
+                                else -> "配对"
+                            }
+                        )
+                    }
+                }
+            }
+
+            // ===== Root 操作卡 =====
+            MiuixCard {
+                Text(
+                    text = "临时 Root",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = currentStatus.value,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // HyperOS 风格大圆按钮
                 Button(
                     onClick = {
-                        if (isProcessing) return@Button
-                        
-                        isProcessing = true
-                        logs = emptyList()
-                        currentStatus = "检查环境..."
-                        
+                        if (isProcessing.value) return@Button
+                        if (adbState !is AdbShell.State.Connected) {
+                            showPairingDialog.value = true
+                            return@Button
+                        }
+                        isProcessing.value = true
                         scope.launch {
-                            fun log(msg: String) { logs = logs + msg }
-                            
-                            log("🔍 开始环境检查...")
-                            val checkResult = rootManager.checkEnvironment(onLog = { log(it) })
-                            
-                            if (checkResult.isFailure) {
-                                log("❌ 环境检查失败: ${checkResult.exceptionOrNull()?.message}")
-                                environmentCheck = checkResult.exceptionOrNull()?.message
-                                currentStatus = "检查失败"
-                                isProcessing = false
-                                return@launch
+                            try {
+                                log("🔍 开始环境检查...")
+                                val checkResult = rootManager.checkEnvironment(onLog = { log(it) })
+                                if (checkResult.isFailure) {
+                                    log("❌ 环境检查失败: ${checkResult.exceptionOrNull()?.message}")
+                                    currentStatus.value = "检查失败"
+                                    return@launch
+                                }
+                                log("✅ 环境检查通过: ${checkResult.getOrDefault("")}")
+
+                                currentStatus.value = "执行 SELinux 宽容..."
+                                val selinuxSuccess = rootManager.setSELinuxPermissive(
+                                    maxRetries = maxRetries,
+                                    onLog = { log(it) },
+                                    onStatusUpdate = { currentStatus.value = it }
+                                )
+                                if (!selinuxSuccess) {
+                                    log("⚠️ SELinux 宽容失败")
+                                    log("ℹ 降级策略：继续尝试 ksud 注入（未宽容时成功率较低）")
+                                }
+
+                                currentStatus.value = "执行 MQSAS 注入..."
+                                rootManager.injectKSUD(onLog = { log(it) })
+
+                                currentStatus.value = "完成"
+                            } finally {
+                                isProcessing.value = false
                             }
-                            
-                            log("✅ 环境检查通过: ${checkResult.getOrDefault("")}")
-                            environmentCheck = null
-                            
-                            currentStatus = "执行 SELinux 宽容..."
-                            val selinuxSuccess = rootManager.setSELinuxPermissive(
-                                maxRetries = maxRetries,
-                                onLog = { log(it) },
-                                onStatusUpdate = { currentStatus = it }
-                            )
-                            
-                            if (!selinuxSuccess) {
-                                log("⚠️ SELinux 宽容失败")
-                                log("ℹ 降级策略：继续尝试 ksud 注入（未宽容时成功率较低）")
-                            }
-                            
-                            currentStatus = "执行 MQSAS 注入..."
-                            rootManager.injectKSUD(onLog = { log(it) })
-                            
-                            currentStatus = "检查结果..."
-                            delay(1000)
-                            rootStatus = rootManager.checkRootStatus()
-                            
-                            if (rootStatus["root_available"] == "已获取") {
-                                log("")
-                                log("🎉🎉🎉 临时 Root 成功！")
-                                log("注意：重启后失效")
-                                currentStatus = "Root 成功"
-                            } else {
-                                log("")
-                                log("⚠️ 注入完成，但未检测到 Root")
-                                log("请手动检查或查看 /sdcard/ksulog.txt")
-                                currentStatus = "完成 (未确认)"
-                            }
-                            
-                            isProcessing = false
                         }
                     },
+                    enabled = !isProcessing.value,
                     modifier = Modifier
-                        .size(160.dp)
-                        .shadow(8.dp, CircleShape)
-                        .clip(CircleShape),
-                    enabled = !isProcessing,
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    shape = RoundedCornerShape(20.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isProcessing) MaterialTheme.colorScheme.secondary 
-                        else MaterialTheme.colorScheme.primary
+                        containerColor = MaterialTheme.colorScheme.primary
                     )
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(48.dp))
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            if (isProcessing) "执行中..." else "一键 Root",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold
+                    if (isProcessing.value) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(22.dp),
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            strokeWidth = 2.5.dp
                         )
+                        Spacer(modifier = Modifier.width(12.dp))
                     }
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            Text(
-                text = "状态: $currentStatus",
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.align(Alignment.CenterHorizontally)
-            )
-            
-            if (environmentCheck != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
                     Text(
-                        text = "⚠️ $environmentCheck",
-                        modifier = Modifier.padding(12.dp),
-                        color = MaterialTheme.colorScheme.onErrorContainer
+                        text = if (isProcessing.value) "执行中..." else "一键 Root",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            Text(text = "执行日志", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            Card(
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                colors = CardDefaults.cardColors(containerColor = Color.Black)
-            ) {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize().padding(12.dp)
-                ) {
-                    items(logs) { log ->
+
+            // ===== 设备信息卡 =====
+            DeviceInfoCard()
+
+            // ===== 日志卡 =====
+            if (logs.value.isNotEmpty()) {
+                MiuixCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = log,
-                            color = when {
-                                log.contains("✅") || log.contains("SUCCESS") -> Color(0xFF4CAF50)
-                                log.contains("❌") || log.contains("失败") -> Color(0xFFF44336)
-                                log.contains("⚠️") || log.contains("警告") -> Color(0xFFFFC107)
-                                else -> Color(0xFFE0E0E0)
-                            },
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(vertical = 2.dp)
+                            text = "运行日志",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = { logs.value = emptyList() }) {
+                            Icon(Icons.Rounded.Refresh, contentDescription = "清空",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Text(
+                            text = logs.value.joinToString("\n"),
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                                lineHeight = 19.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState())
+                                .padding(14.dp)
+                                .heightIn(max = 320.dp)
                         )
                     }
                 }
             }
         }
     }
+
+    // 配对弹层
+    if (showPairingDialog.value) {
+        PairingDialog(
+            onDismiss = { showPairingDialog.value = false },
+            onPaired = { port ->
+                showPairingDialog.value = false
+                scope.launch {
+                    currentStatus.value = "连接 ADB..."
+                    val r = AdbShell.connect()
+                    log(if (r.isSuccess) "✓ 配对完成，ADB 已连接 (端口 $port)"
+                       else "✗ 配对完成但连接失败: ${r.exceptionOrNull()?.message}")
+                    currentStatus.value = "空闲"
+                }
+            }
+        )
+    }
 }
 
+// ==================== 配对对话框 ====================
+
+// 两步流程：① 配对（配对端口 + 6位码） → ② 输入无线调试主端口完成连接
 @Composable
-fun StatusCard(status: Map<String, String>) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = if (status["root_available"] == "已获取")
-                MaterialTheme.colorScheme.primaryContainer
-            else
-                MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(text = "当前状态", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                StatusItem("SELinux", status["selinux"] ?: "未知")
-                StatusItem("Root", status["root_available"] ?: "未知")
-                StatusItem("ksud", status["ksud_running"] ?: "未知")
+fun PairingDialog(
+    onDismiss: () -> Unit,
+    onPaired: (port: Int) -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var step by remember { mutableStateOf(1) }
+    var pairPortText by remember { mutableStateOf("") }
+    var codeText by remember { mutableStateOf("") }
+    var mainPortText by remember { mutableStateOf(AdbShell.getSavedPort(context).takeIf { it > 0 }?.toString() ?: "") }
+    var working by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = { if (!working) onDismiss() },
+        shape = RoundedCornerShape(28.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        title = {
+            Text(
+                text = if (step == 1) "ADB 无线配对" else "设置连接端口",
+                style = MaterialTheme.typography.titleLarge
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (step == 1) {
+                    Text(
+                        text = "1. 打开「设置 → 开发者选项 → 无线调试」\n" +
+                               "2. 点「使用配对码配对设备」\n" +
+                               "3. 填入弹窗显示的端口和 6 位配对码",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = pairPortText,
+                        onValueChange = { pairPortText = it.filter { c -> c.isDigit() }.take(5) },
+                        label = { Text("配对端口") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = codeText,
+                        onValueChange = { codeText = it.filter { c -> c.isDigit() }.take(6) },
+                        label = { Text("6 位配对码") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    Text(
+                        text = "✓ 配对成功！\n\n现在返回「无线调试」主界面，\n填入顶部显示的端口号（注意：不是配对端口）",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = mainPortText,
+                        onValueChange = { mainPortText = it.filter { c -> c.isDigit() }.take(5) },
+                        label = { Text("无线调试主端口") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                message?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
             }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (step == 1) {
+                        val port = pairPortText.toIntOrNull() ?: 0
+                        if (port !in 1..65535) {
+                            message = "请输入有效配对端口"
+                            return@Button
+                        }
+                        if (codeText.length != 6) {
+                            message = "配对码应为 6 位数字"
+                            return@Button
+                        }
+                        working = true
+                        message = null
+                        scope.launch {
+                            val result = AdbShell.pair(port, codeText)
+                            working = false
+                            if (result.isSuccess) {
+                                step = 2
+                            } else {
+                                message = "配对失败: ${result.exceptionOrNull()?.message}"
+                            }
+                        }
+                    } else {
+                        val port = mainPortText.toIntOrNull() ?: 0
+                        if (port !in 1..65535) {
+                            message = "请输入有效端口"
+                            return@Button
+                        }
+                        AdbShell.savePort(context, port)
+                        onPaired(port)
+                    }
+                },
+                enabled = !working,
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                if (working) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                Text(
+                    text = when {
+                        working -> "配对中..."
+                        step == 1 -> "配对"
+                        else -> "完成"
+                    }
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !working) { Text("取消") }
         }
+    )
+}
+
+// ==================== 设备信息 ====================
+
+@Composable
+fun DeviceInfoCard() {
+    MiuixCard {
+        Text(
+            text = "设备信息",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(modifier = Modifier.height(14.dp))
+        InfoRow("型号", android.os.Build.MODEL)
+        InfoRow("设备", android.os.Build.DEVICE)
+        InfoRow("系统", "Android ${android.os.Build.VERSION.RELEASE}")
+        InfoRow("安全补丁", android.os.Build.VERSION.SECURITY_PATCH)
     }
 }
 
 @Composable
-fun StatusItem(label: String, value: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun InfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.weight(1f))
         Text(
             text = value,
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.Bold,
-            color = when {
-                value.contains("Permissive") || value.contains("已获取") || value.contains("运行中") -> MaterialTheme.colorScheme.primary
-                value.contains("Enforcing") || value.contains("未获取") || value.contains("未运行") -> MaterialTheme.colorScheme.error
-                else -> MaterialTheme.colorScheme.onSurface
-            }
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.End
         )
-    }
-}
-
-@Composable
-fun DeviceInfoCard(status: Map<String, String>) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(text = "设备信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(8.dp))
-            Text("型号: ${android.os.Build.MODEL}")
-            Text("设备: ${android.os.Build.DEVICE}")
-            Text("系统: Android ${android.os.Build.VERSION.RELEASE}")
-            Text("安全补丁: ${android.os.Build.VERSION.SECURITY_PATCH}")
-            Text("内核: ${status["kernel"] ?: "未知"}")
-        }
     }
 }
