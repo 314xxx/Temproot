@@ -67,7 +67,7 @@ class PairingDialogActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        AdbShell.init(this)
+        // AdbShell 已在 App（Application）中初始化
         portState.value = intent?.getIntExtra(EXTRA_PORT, -1)?.takeIf { it > 0 }
         setContent {
             TempRootAppTheme {

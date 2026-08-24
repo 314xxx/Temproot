@@ -171,26 +171,39 @@ object MdnsDiscovery {
         }
 
         fun onServiceResolved(resolvedService: NsdServiceInfo) {
-            resolving = false
-            if (!running) return
-            if (isLocalDevice(resolvedService) && isPortInUse(resolvedService.port)) {
-                serviceName = resolvedService.serviceName
-                stop()
-                observer(resolvedService.port)
-            } else {
-                scheduleRestart()
+            if (!running) {
+                resolving = false
+                return
             }
+            val port = resolvedService.port
+            val host = resolvedService.host?.hostAddress
+            val name = resolvedService.serviceName
+            // 关键：本机地址与端口占用校验均为网络操作（NetworkInterface/ServerSocket），
+            // 必须在后台线程执行——主线程 NsdManager 回调里直接做会抛 NetworkOnMainThreadException（闪退根因）
+            Thread {
+                val ok = host != null && isLocalDevice(host) && isPortInUse(port)
+                handler.post {
+                    resolving = false
+                    if (!running) return@post
+                    if (ok) {
+                        serviceName = name
+                        stop()
+                        observer(port)
+                    } else {
+                        scheduleRestart()
+                    }
+                }
+            }.start()
         }
 
-        /** 解析出的服务地址是否为本机地址（避免连到局域网其他 Android 设备） */
-        private fun isLocalDevice(info: NsdServiceInfo): Boolean = runCatching {
-            val hostAddr = info.host?.hostAddress ?: return false
+        /** 解析出的服务地址是否为本机地址（避免连到局域网其他 Android 设备）。后台线程调用。 */
+        private fun isLocalDevice(hostAddr: String): Boolean = runCatching {
             NetworkInterface.getNetworkInterfaces().asSequence()
                 .flatMap { it.inetAddresses.asSequence() }
                 .any { it.hostAddress == hostAddr }
         }.getOrDefault(false)
 
-        /** 端口在 127.0.0.1 上是否真实被监听（占用 = true，用于过滤幻影服务） */
+        /** 端口在 127.0.0.1 上是否真实被监听（占用 = true，用于过滤幻影服务）。后台线程调用。 */
         private fun isPortInUse(port: Int) = try {
             ServerSocket().use {
                 it.bind(InetSocketAddress("127.0.0.1", port), 1)

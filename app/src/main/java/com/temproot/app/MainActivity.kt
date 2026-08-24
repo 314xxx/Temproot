@@ -51,8 +51,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        CrashHandler.install(this)
-        AdbShell.init(this)
+        // CrashHandler / AdbShell 已在 App（Application）中初始化
         setContent {
             TempRootAppTheme {
                 AppNavigation(prefs)
