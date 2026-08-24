@@ -1,10 +1,15 @@
 package com.temproot.app
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -128,6 +133,19 @@ fun MainScreen(
     }
 
     val maxRetries = prefs.getInt(MainActivity.KEY_MAX_RETRIES, MainActivity.DEFAULT_MAX_RETRIES)
+
+    // Android 13+ 请求通知权限（用于通知栏内输入配对码）
+    val notifPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(
@@ -425,7 +443,20 @@ fun PairingDialog(
             detectedPort = port
             // 自动检测成功时填入端口（不覆盖用户已输入的内容）
             if (portText.isBlank()) portText = port.toString()
+            // 主流方式：发送通知，用户可直接在通知栏输入配对码，无需切回应用
+            PairingNotifier.showPairingRequest(context, port)
         }
+    }
+
+    // 弹窗关闭时取消未完成的配对通知
+    DisposableEffect(Unit) {
+        onDispose { PairingNotifier.cancel(context) }
+    }
+
+    // 通知路径配对成功后自动连接 → 状态变为 Connected 时自动关闭弹窗
+    val adbStateForDialog by AdbShell.state.collectAsState()
+    LaunchedEffect(adbStateForDialog) {
+        if (adbStateForDialog is AdbShell.State.Connected) onPaired()
     }
 
     val effectivePort = detectedPort ?: portText.trim().toIntOrNull()?.takeIf { it in 1..65535 }
@@ -451,6 +482,11 @@ fun PairingDialog(
 
                 // ② 配对服务监听状态
                 Text("② 点「使用配对码配对设备」", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = "检测到配对服务后会发送通知，可直接在通知栏输入配对码",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant
