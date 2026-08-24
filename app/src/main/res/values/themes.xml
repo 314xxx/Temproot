@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.TempRootApp" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- 配对对话框 Activity：透明窗口，Compose Dialog 绘制系统样式对话框（Shizuku 同款） -->
+    <style name="Theme.TempRootApp.Dialog">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
 </resources>

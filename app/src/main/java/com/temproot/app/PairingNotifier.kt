@@ -80,15 +80,27 @@ object PairingNotifier {
             .setAllowGeneratedReplies(false)
             .build()
 
+        // 点击通知正文 → 弹出系统样式配对对话框（Shizuku 同款，无需回到应用主界面）
+        val contentIntent = Intent(context, PairingDialogActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            putExtra(PairingDialogActivity.EXTRA_PORT, port)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        val contentPendingIntent = PendingIntent.getActivity(
+            context, 1, contentIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_notify)
             .setContentTitle("ADB 配对请求")
-            .setContentText("已检测到配对服务，点击下方按钮输入配对码")
+            .setContentText("已检测到配对服务，点击输入配对码")
+            .setContentIntent(contentPendingIntent)
             .setStyle(NotificationCompat.BigTextStyle()
-                .bigText("已检测到配对服务（端口 $port）。\n直接在通知内输入系统弹窗显示的 6 位配对码即可完成配对，无需切回应用。"))
+                .bigText("已检测到配对服务（端口 $port）。\n点击通知弹出配对对话框，或直接在通知内输入系统弹窗显示的 6 位配对码，无需切回应用。"))
             .addAction(replyAction)
-            .setOngoing(true)
-            .setAutoCancel(false)
+            .setOngoing(false)
+            .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
 

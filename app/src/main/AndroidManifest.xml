@@ -26,6 +26,14 @@
             </intent-filter>
         </activity>
 
+        <!-- 系统样式配对对话框（Shizuku 同款）：应用内「配对」与通知点击均可打开 -->
+        <activity
+            android:name=".PairingDialogActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.TempRootApp.Dialog" />
+
         <!-- 通知内输入配对码（RemoteInput 回复） -->
         <receiver
             android:name=".PairingReplyReceiver"
