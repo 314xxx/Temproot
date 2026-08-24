@@ -50,15 +50,15 @@ jobs:
           TempRoot 一键临时 Root 工具
 
           **功能：**
-          - 基于 KernelSU late-load 注入
-          - 通过 Shizuku 执行 Shell 命令
+          - 基于 KernelSU late-load 注入（借用已安装的 KernelSU 管理器）
+          - 无线 ADB 自配对（mDNS 自动发现端口，无需电脑、无需 Shizuku）
+          - 配对码支持通知栏内直接输入（RemoteInput 通知）
           - 支持 HyperOS/MIUI 特定机型
 
           **使用方法：**
-          1. 安装并启动 Shizuku
-          2. 安装本 APK
-          3. 授予 Shizuku 权限
-          4. 点击一键 Root
+          1. 安装本 APK
+          2. 打开「无线调试」→ 点「配对」→ 在通知栏或弹窗内输入 6 位配对码
+          3. 回到应用点「一键 Root」
 
           **注意：** 临时 Root，重启后失效
         files: app/build/outputs/apk/debug/*.apk
