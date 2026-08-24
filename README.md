@@ -5,6 +5,7 @@
 ## 功能特性
 
 - ✅ **无需 Shizuku** - 内置 ADB 客户端，通过无线调试自配对独立获取 shell 权限
+- ✅ **mDNS 自动发现端口** - 参考 AxManager/Shizuku 方案，配对只需输入 6 位配对码，连接全自动
 - ✅ **配对一次永久使用** - ADB 证书持久化保存，重启应用后无需重复配对
 - ✅ 一键获取临时 Root（重启失效）
 - ✅ 自动执行 SELinux 宽容注入（cf 漏洞利用）
@@ -61,13 +62,13 @@
 ### 2. 首次配对（一次性）
 
 1. 打开手机「设置 → 开发者选项 → 无线调试」并开启
-2. 点击「使用配对码配对设备」，屏幕会显示 **配对端口** 和 **6 位配对码**
-3. 回到 TempRoot，点击「配对」：
-   - 第一步：填入配对端口和 6 位配对码
-   - 第二步：返回「无线调试」主界面，填入顶部显示的**主端口**（注意不是配对端口）
-4. 配对完成后自动连接
+2. 回到 TempRoot，点击「配对」
+3. 在手机上点击「使用配对码配对设备」——应用会**自动检测配对服务**（mDNS 发现，无需输入端口）
+4. 输入弹窗显示的 **6 位配对码**，点击「配对」
+5. 配对成功后自动发现连接端口并连接
 
-> 配对证书已持久化保存，之后无需再次配对。重新开关无线调试后**主端口会变化**，只需在设置中更新端口即可。
+> 配对端口与连接端口均由 mDNS 自动发现，全程无需手动输入任何端口。
+> 配对证书已持久化保存，之后无需再次配对。
 
 ### 3. 一键 Root
 
@@ -87,9 +88,10 @@ su -c id
 ## 技术原理
 
 1. **ADB 无线自配对**: 内置 [Kadb](https://github.com/flyfishxu/Kadb) 客户端（SPAKE2 + TLS + RSA），直连本机 `127.0.0.1` 的 adbd 获取 shell 权限，替代 Shizuku
-2. **cf 漏洞利用**: 通过 GPU DMA 时序漏洞修改 SELinux 策略为宽容模式
-3. **MQSAS 注入**: 利用小米系统服务漏洞启动 ksud 守护进程
-4. **KernelSU late-load**: 在系统启动后加载内核级 Root 方案
+2. **mDNS 端口自动发现**: 参考 [AxManager](https://github.com/fahrez182/AxManager)/Shizuku 方案，通过 NsdManager 监听 `_adb-tls-pairing._tcp` / `_adb-tls-connect._tcp` 服务广播，配对与连接端口全自动获取（含本机地址与端口占用双重校验）
+3. **cf 漏洞利用**: 通过 GPU DMA 时序漏洞修改 SELinux 策略为宽容模式
+4. **MQSAS 注入**: 利用小米系统服务漏洞启动 ksud 守护进程
+5. **KernelSU late-load**: 在系统启动后加载内核级 Root 方案
 
 ## 项目结构
 
@@ -102,6 +104,7 @@ TempRoot/
 │   │   │   ├── ksud               # KernelSU 管理器守护进程
 │   │   │   └── supported_devices.json  # 设备支持表
 │   │   ├── java/com/temproot/app/
+│   │   │   ├── MdnsDiscovery.kt     # mDNS 端口自动发现（NsdManager）
 │   │   │   ├── AdbShell.kt        # ADB 连接管理（配对/连接/命令/push）
 │   │   │   ├── RootManager.kt     # Root 流程（环境检查/注入/状态）
 │   │   │   ├── MainActivity.kt    # 主界面（Miuix 风格）
@@ -118,7 +121,7 @@ TempRoot/
 
 ### 应用内设置
 
-- **ADB 主端口**: 无线调试主界面显示的端口号（开关无线调试后会变化）
+- **备用端口（可选）**: mDNS 自动发现失败时使用的连接端口，一般无需填写
 - **cf 最大重试次数**: SELinux 宽容注入的尝试上限（推荐 50-100）
 
 ### 设备支持表（外部 JSON）
@@ -178,6 +181,7 @@ TempRoot/
 
 - [KernelSU](https://github.com/tiann/KernelSU) - 内核级 Root 方案
 - [Kadb](https://github.com/flyfishxu/Kadb) - Kotlin ADB 客户端（无线配对）
+- [AxManager](https://github.com/fahrez182/AxManager) - mDNS 端口自动发现方案参考
 - [Uotan Wiki](https://wiki.uotan.cn) - 小米设备代号参考
 
 ## 许可证

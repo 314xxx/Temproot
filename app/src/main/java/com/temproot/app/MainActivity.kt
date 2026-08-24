@@ -173,34 +173,31 @@ fun MainScreen(
                         )
                         Text(
                             text = when {
-                                adbState is AdbShell.State.Connected ->
-                                    "端口 ${AdbShell.getSavedPort(context)} · shell 权限就绪"
-                                AdbShell.getSavedPort(context) > 0 ->
-                                    "点击连接 · 端口 ${AdbShell.getSavedPort(context)}"
-                                else -> "无线调试自配对 · 无需 Shizuku"
+                                adbState is AdbShell.State.Connected -> "已连接 · shell 权限就绪"
+                                AdbShell.isPaired(context) -> "点击连接 · 自动发现端口"
+                                else -> "首次使用需配对 · 无需电脑"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     TextButton(onClick = {
-                        if (adbState is AdbShell.State.Connected) {
-                            AdbShell.disconnect()
-                        } else if (AdbShell.getSavedPort(context) > 0) {
-                            scope.launch {
+                        when {
+                            adbState is AdbShell.State.Connected -> AdbShell.disconnect()
+                            AdbShell.isPaired(context) -> scope.launch {
                                 currentStatus.value = "连接 ADB..."
-                                val r = AdbShell.connect()
-                                log(if (r.isSuccess) "✓ ADB 连接成功" else "✗ ADB 连接失败: ${r.exceptionOrNull()?.message}")
+                                val r = AdbShell.connect { log(it) }
+                                log(if (r.isSuccess) "✓ ADB 已连接"
+                                    else "✗ ADB 连接失败: ${r.exceptionOrNull()?.message}")
                                 currentStatus.value = "空闲"
                             }
-                        } else {
-                            showPairingDialog.value = true
+                            else -> showPairingDialog.value = true
                         }
                     }) {
                         Text(
                             text = when {
                                 adbState is AdbShell.State.Connected -> "断开"
-                                AdbShell.getSavedPort(context) > 0 -> "连接"
+                                AdbShell.isPaired(context) -> "连接"
                                 else -> "配对"
                             }
                         )
@@ -333,13 +330,13 @@ fun MainScreen(
     if (showPairingDialog.value) {
         PairingDialog(
             onDismiss = { showPairingDialog.value = false },
-            onPaired = { port ->
+            onPaired = {
                 showPairingDialog.value = false
                 scope.launch {
                     currentStatus.value = "连接 ADB..."
-                    val r = AdbShell.connect()
-                    log(if (r.isSuccess) "✓ 配对完成，ADB 已连接 (端口 $port)"
-                       else "✗ 配对完成但连接失败: ${r.exceptionOrNull()?.message}")
+                    val r = AdbShell.connect { log(it) }
+                    log(if (r.isSuccess) "✓ 配对完成，ADB 已连接"
+                       else "✗ 配对成功但连接失败: ${r.exceptionOrNull()?.message}")
                     currentStatus.value = "空闲"
                 }
             }
@@ -349,73 +346,106 @@ fun MainScreen(
 
 // ==================== 配对对话框 ====================
 
-// 两步流程：① 配对（配对端口 + 6位码） → ② 输入无线调试主端口完成连接
+// 单步式（参考 AxManager/Shizuku）：配对端口由 mDNS 自动发现，用户只需输入 6 位配对码。
+// 系统「使用配对码配对设备」弹窗打开时才会广播配对服务，此处在后台持续监听。
 @Composable
 fun PairingDialog(
     onDismiss: () -> Unit,
-    onPaired: (port: Int) -> Unit
+    onPaired: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var step by remember { mutableStateOf(1) }
-    var pairPortText by remember { mutableStateOf("") }
     var codeText by remember { mutableStateOf("") }
-    var mainPortText by remember { mutableStateOf(AdbShell.getSavedPort(context).takeIf { it > 0 }?.toString() ?: "") }
     var working by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
+
+    // 配对端口：null=搜索中；>0=已发现；-1=搜索超时
+    var pairPort by remember { mutableStateOf<Int?>(null) }
+    var scanKey by remember { mutableStateOf(0) }
+
+    // 打开弹层即开始监听配对服务广播（系统配对弹窗弹出时立即捕获端口）
+    LaunchedEffect(scanKey) {
+        pairPort = null
+        pairPort = MdnsDiscovery.discoverPort(context, MdnsDiscovery.TLS_PAIRING, timeoutMs = 120_000)
+    }
+
+    val scanning = pairPort == null
 
     AlertDialog(
         onDismissRequest = { if (!working) onDismiss() },
         shape = RoundedCornerShape(28.dp),
         containerColor = MaterialTheme.colorScheme.surface,
         title = {
-            Text(
-                text = if (step == 1) "ADB 无线配对" else "设置连接端口",
-                style = MaterialTheme.typography.titleLarge
-            )
+            Text("ADB 无线配对", style = MaterialTheme.typography.titleLarge)
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (step == 1) {
-                    Text(
-                        text = "1. 打开「设置 → 开发者选项 → 无线调试」\n" +
-                               "2. 点「使用配对码配对设备」\n" +
-                               "3. 填入弹窗显示的端口和 6 位配对码",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    OutlinedTextField(
-                        value = pairPortText,
-                        onValueChange = { pairPortText = it.filter { c -> c.isDigit() }.take(5) },
-                        label = { Text("配对端口") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = codeText,
-                        onValueChange = { codeText = it.filter { c -> c.isDigit() }.take(6) },
-                        label = { Text("6 位配对码") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                } else {
-                    Text(
-                        text = "✓ 配对成功！\n\n现在返回「无线调试」主界面，\n填入顶部显示的端口号（注意：不是配对端口）",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    OutlinedTextField(
-                        value = mainPortText,
-                        onValueChange = { mainPortText = it.filter { c -> c.isDigit() }.take(5) },
-                        label = { Text("无线调试主端口") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                Text(
+                    text = "1. 打开「设置 → 开发者选项 → 无线调试」\n" +
+                           "2. 点「使用配对码配对设备」\n" +
+                           "3. 输入弹窗显示的 6 位配对码（端口自动检测）",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // 配对服务搜索状态
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (scanning) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "正在搜索配对服务...",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else if (pairPort != null && pairPort!! > 0) {
+                            StatusDot(color = Color(0xFF34C759))
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "已检测到配对服务（端口 $pairPort）",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            StatusDot(color = MaterialTheme.colorScheme.error)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "未检测到配对服务",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = {
+                                codeText = ""
+                                message = null
+                                scanKey++
+                            }) { Text("重试") }
+                        }
+                    }
                 }
+
+                OutlinedTextField(
+                    value = codeText,
+                    onValueChange = { codeText = it.filter { c -> c.isDigit() }.take(6) },
+                    label = { Text("6 位配对码") },
+                    singleLine = true,
+                    enabled = !working,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
                 message?.let {
                     Text(
                         text = it,
@@ -428,38 +458,29 @@ fun PairingDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    if (step == 1) {
-                        val port = pairPortText.toIntOrNull() ?: 0
-                        if (port !in 1..65535) {
-                            message = "请输入有效配对端口"
-                            return@Button
+                    if (codeText.length != 6) {
+                        message = "配对码应为 6 位数字"
+                        return@Button
+                    }
+                    val port = pairPort?.takeIf { it > 0 } ?: run {
+                        message = "尚未检测到配对服务"
+                        return@Button
+                    }
+                    working = true
+                    message = null
+                    scope.launch {
+                        val result = AdbShell.pair(codeText, port)
+                        working = false
+                        if (result.isSuccess) {
+                            onPaired()
+                        } else {
+                            message = "配对失败: ${result.exceptionOrNull()?.message}"
+                            // 配对弹窗可能已关闭或端口已变化，重新搜索
+                            scanKey++
                         }
-                        if (codeText.length != 6) {
-                            message = "配对码应为 6 位数字"
-                            return@Button
-                        }
-                        working = true
-                        message = null
-                        scope.launch {
-                            val result = AdbShell.pair(port, codeText)
-                            working = false
-                            if (result.isSuccess) {
-                                step = 2
-                            } else {
-                                message = "配对失败: ${result.exceptionOrNull()?.message}"
-                            }
-                        }
-                    } else {
-                        val port = mainPortText.toIntOrNull() ?: 0
-                        if (port !in 1..65535) {
-                            message = "请输入有效端口"
-                            return@Button
-                        }
-                        AdbShell.savePort(context, port)
-                        onPaired(port)
                     }
                 },
-                enabled = !working,
+                enabled = !working && pairPort != null && pairPort!! > 0,
                 shape = RoundedCornerShape(16.dp)
             ) {
                 if (working) {
@@ -470,13 +491,7 @@ fun PairingDialog(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                 }
-                Text(
-                    text = when {
-                        working -> "配对中..."
-                        step == 1 -> "配对"
-                        else -> "完成"
-                    }
-                )
+                Text(if (working) "配对中..." else "配对")
             }
         },
         dismissButton = {

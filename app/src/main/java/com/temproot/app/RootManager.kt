@@ -93,10 +93,10 @@ class RootManager(private val context: Context) {
             // 阶段 1/5: ADB 连接
             onLog("[1/5] 检查 ADB 连接...")
             if (!AdbShell.isConnected) {
-                val connectResult = AdbShell.connect()
+                val connectResult = AdbShell.connect(onLog)
                 if (connectResult.isFailure) {
                     onLog("  ❌ ADB 未连接: ${connectResult.exceptionOrNull()?.message}")
-                    onLog("  ℹ 请确认已开启无线调试并在设置中填入正确端口")
+                    onLog("  ℹ 请确认已开启「无线调试」且 Wi-Fi 已连接")
                     return@withContext Result.failure(Exception("ADB 未连接: ${connectResult.exceptionOrNull()?.message}"))
                 }
             }

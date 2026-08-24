@@ -63,7 +63,7 @@ object AdbShell {
         }
     }
 
-    /** 已保存的连接端口（无线调试主界面显示的端口） */
+    /** 已保存的连接端口（自动发现失败时的备用端口） */
     fun getSavedPort(context: Context): Int {
         return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             .getInt(KEY_PORT, 0)
@@ -74,14 +74,27 @@ object AdbShell {
             .edit().putInt(KEY_PORT, port).apply()
     }
 
+    /** 是否已完成过配对（证书已持久化） */
+    fun isPaired(context: Context): Boolean {
+        return File(context.filesDir, "kadb_cert.pem").exists() &&
+                File(context.filesDir, "kadb_key.pem").exists()
+    }
+
     /**
-     * 配对：输入无线调试"使用配对码配对设备"弹窗中显示的 配对端口 和 6位配对码。
+     * 配对：只需输入无线调试"使用配对码配对设备"弹窗中显示的 6 位配对码。
+     * 配对端口通过 mDNS 自动发现（参考 AxManager/Shizuku 方案）。
+     * @param discoveredPort 调用方已发现的配对端口；null 时内部自动发现
      * 成功后证书持久化，之后无需再次配对（除非清除应用数据或重置 adb 授权）。
      */
-    suspend fun pair(port: Int, pairingCode: String): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun pair(pairingCode: String, discoveredPort: Int? = null): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            require(port in 1..65535) { "端口号无效" }
             require(pairingCode.isNotBlank()) { "配对码不能为空" }
+            val ctx = appContext ?: error("AdbShell 未初始化")
+
+            val port = discoveredPort
+                ?: MdnsDiscovery.discoverPort(ctx, MdnsDiscovery.TLS_PAIRING, timeoutMs = 15_000)
+                ?: throw Exception("未发现配对服务，请先打开「使用配对码配对设备」弹窗")
+
             Kadb.pair(HOST, port, pairingCode.trim())
         }.onSuccess {
             // 配对成功后保存证书，重启应用后无需重新配对
@@ -89,19 +102,32 @@ object AdbShell {
         }
     }
 
-    /** 连接本机 adbd（端口来自设置），成功后进入 Connected 状态 */
-    suspend fun connect(): Result<Unit> = withContext(Dispatchers.IO) {
+    /**
+     * 连接本机 adbd：mDNS 自动发现当前端口（无线调试每次开关端口会变，自动发现免手动更新）。
+     * 发现失败时回退到上次成功连接的备用端口。
+     */
+    suspend fun connect(onLog: (String) -> Unit = {}): Result<Unit> = withContext(Dispatchers.IO) {
         mutex.withLock {
             runCatching {
                 val ctx = appContext ?: error("AdbShell 未初始化")
-                val port = getSavedPort(ctx)
-                require(port > 0) { "未设置 ADB 端口，请先在设置中填写无线调试端口" }
+
+                val discovered = MdnsDiscovery.discoverPort(ctx, MdnsDiscovery.TLS_CONNECT, 8_000)
+                val port = discovered
+                    ?: getSavedPort(ctx).takeIf { it > 0 }
+                    ?: throw Exception("未发现无线调试服务\n请确认「无线调试」已开启且 Wi-Fi 已连接")
+
+                if (discovered != null) {
+                    onLog("✓ 发现无线调试端口: $discovered")
+                } else {
+                    onLog("ℹ 自动发现失败，使用备用端口: $port")
+                }
 
                 closeLocked()
                 val k = Kadb.create(HOST, port)
                 val resp = k.shell("id")
-                check(resp.exitCode == 0) { "ADB 连接验证失败: ${resp.allOutput.trim()}" }
+                check(resp.exitCode == 0) { "连接验证失败: ${resp.allOutput.trim()}" }
 
+                if (discovered != null) savePort(ctx, discovered)
                 kadb = k
                 _state.value = State.Connected
             }.onFailure {

@@ -61,7 +61,7 @@ fun SettingsScreen(
                 Text(text = "ADB 连接", style = MaterialTheme.typography.titleMedium)
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "「无线调试」主界面顶部显示的端口号。重新开关无线调试后端口会变化，需更新。",
+                    text = "连接端口由 mDNS 自动发现，一般无需手动设置。仅当自动发现失败时填写「无线调试」主界面显示的端口号。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -73,7 +73,7 @@ fun SettingsScreen(
                             portText = it.filter { c -> c.isDigit() }.take(5)
                             portSaved = false
                         },
-                        label = { Text("主端口") },
+                        label = { Text("备用端口（可选）") },
                         singleLine = true,
                         shape = RoundedCornerShape(14.dp),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
