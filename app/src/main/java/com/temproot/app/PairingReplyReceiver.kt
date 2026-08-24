@@ -45,6 +45,8 @@ class PairingReplyReceiver : BroadcastReceiver() {
                     if (connected.isSuccess) "配对成功，ADB 已连接，可回到应用执行一键 Root"
                     else "配对成功，但连接失败: ${connected.exceptionOrNull()?.message}"
                 )
+                // 配对流程结束，停止监听服务
+                PairingService.stop(appContext)
             } finally {
                 pending.finish()
             }

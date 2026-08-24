@@ -1,10 +1,14 @@
 package com.temproot.app
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -65,10 +69,23 @@ class PairingDialogActivity : ComponentActivity() {
     /** 通知路径传入的已检测端口（服务已确认存在时无需重新监听） */
     private val portState = mutableStateOf<Int?>(null)
 
+    // Android 13+ 通知权限被拒时配对通知静默失败，进入对话框时补请求
+    private val notifPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // AdbShell 已在 App（Application）中初始化
         portState.value = intent?.getIntExtra(EXTRA_PORT, -1)?.takeIf { it > 0 }
+        // 启动前台监听服务：用户跳到系统设置后监听不中断，检测到服务必发通知
+        PairingService.start(this)
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         setContent {
             TempRootAppTheme {
                 PairingDialogScreen(
@@ -83,6 +100,12 @@ class PairingDialogActivity : ComponentActivity() {
         super.onNewIntent(intent)
         // singleTop：通知重复点击时更新端口
         portState.value = intent.getIntExtra(EXTRA_PORT, -1).takeIf { it > 0 }
+    }
+
+    override fun onDestroy() {
+        // 对话框关闭时停止监听（若配对已完成则服务早已停止，此处幂等）
+        PairingService.stop(this)
+        super.onDestroy()
     }
 }
 

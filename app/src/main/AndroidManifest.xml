@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Android 13+ 通知栏内输入配对码（RemoteInput 通知） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 配对监听前台服务：跳转系统设置后监听不中断（进程不被冻结） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:name=".App"
@@ -39,6 +42,12 @@
         <receiver
             android:name=".PairingReplyReceiver"
             android:exported="false" />
+
+        <!-- 配对监听前台服务：保持进程活跃，mDNS 检测到服务必发通知 -->
+        <service
+            android:name=".PairingService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
     </application>
 
