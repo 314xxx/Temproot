@@ -1,6 +1,7 @@
 package com.temproot.app
 
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Refresh
@@ -22,6 +24,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -45,6 +48,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashHandler.install(this)
         AdbShell.init(this)
         setContent {
             TempRootAppTheme {
@@ -186,6 +190,7 @@ fun MainScreen(
                             adbState is AdbShell.State.Connected -> AdbShell.disconnect()
                             AdbShell.isPaired(context) -> scope.launch {
                                 currentStatus.value = "连接 ADB..."
+                                log("ℹ 开始连接 ADB...")
                                 val r = AdbShell.connect { log(it) }
                                 log(if (r.isSuccess) "✓ ADB 已连接"
                                     else "✗ ADB 连接失败: ${r.exceptionOrNull()?.message}")
@@ -323,6 +328,45 @@ fun MainScreen(
                     }
                 }
             }
+
+            // ===== 崩溃日志卡（闪退排查，存在崩溃记录时才显示）=====
+            var crashText by remember { mutableStateOf<String?>(null) }
+            LaunchedEffect(Unit) { crashText = CrashHandler.lastCrash(context) }
+            crashText?.let { crash ->
+                MiuixCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "上次崩溃日志",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = {
+                            CrashHandler.clear(context)
+                            crashText = null
+                        }) { Text("清除") }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Text(
+                            text = crash,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                                lineHeight = 17.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState())
+                                .padding(14.dp)
+                                .heightIn(max = 260.dp)
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -346,8 +390,11 @@ fun MainScreen(
 
 // ==================== 配对对话框 ====================
 
-// 单步式（参考 AxManager/Shizuku）：配对端口由 mDNS 自动发现，用户只需输入 6 位配对码。
-// 系统「使用配对码配对设备」弹窗打开时才会广播配对服务，此处在后台持续监听。
+// 主流方案（Shizuku / AxManager 同款流程）：
+// ① 通过 Intent 拉起系统「无线调试」设置页（即"发送消息"）
+// ② 用户点「使用配对码配对设备」，系统弹窗显示 6 位配对码
+// ③ 应用监听配对服务广播自动捕获端口，用户只需输入配对码
+// ④ mDNS 自动检测失败时，可手动输入系统弹窗中显示的端口兜底
 @Composable
 fun PairingDialog(
     onDismiss: () -> Unit,
@@ -357,23 +404,31 @@ fun PairingDialog(
     val scope = rememberCoroutineScope()
 
     var codeText by remember { mutableStateOf("") }
+    var portText by remember { mutableStateOf("") }
     var working by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
 
-    // 配对端口：null=搜索中；>0=已发现；-1=搜索超时
-    var pairPort by remember { mutableStateOf<Int?>(null) }
+    var scanning by remember { mutableStateOf(true) }
+    var detectedPort by remember { mutableStateOf<Int?>(null) }
     var scanKey by remember { mutableStateOf(0) }
 
     // 打开弹层即开始监听配对服务广播（系统配对弹窗弹出时立即捕获端口）
     LaunchedEffect(scanKey) {
-        pairPort = null
-        pairPort = MdnsDiscovery.discoverPort(
+        scanning = true
+        detectedPort = null
+        val port = MdnsDiscovery.discoverPort(
             context, MdnsDiscovery.TLS_PAIRING,
             timeoutMs = 120_000, indefinite = true
         )
+        scanning = false
+        if (port != null) {
+            detectedPort = port
+            // 自动检测成功时填入端口（不覆盖用户已输入的内容）
+            if (portText.isBlank()) portText = port.toString()
+        }
     }
 
-    val scanning = pairPort == null
+    val effectivePort = detectedPort ?: portText.trim().toIntOrNull()?.takeIf { it in 1..65535 }
 
     AlertDialog(
         onDismissRequest = { if (!working) onDismiss() },
@@ -383,16 +438,19 @@ fun PairingDialog(
             Text("ADB 无线配对", style = MaterialTheme.typography.titleLarge)
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    text = "1. 打开「设置 → 开发者选项 → 无线调试」\n" +
-                           "2. 点「使用配对码配对设备」\n" +
-                           "3. 输入弹窗显示的 6 位配对码（端口自动检测）",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
 
-                // 配对服务搜索状态
+                // ① 拉起系统无线调试设置
+                Text("① 打开「无线调试」", style = MaterialTheme.typography.titleSmall)
+                OutlinedButton(
+                    onClick = { openWirelessDebuggingSettings(context) },
+                    enabled = !working,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp)
+                ) { Text("打开无线调试设置") }
+
+                // ② 配对服务监听状态
+                Text("② 点「使用配对码配对设备」", style = MaterialTheme.typography.titleSmall)
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant
@@ -403,43 +461,48 @@ fun PairingDialog(
                             .padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (scanning) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = "正在搜索配对服务...",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        } else if (pairPort != null && pairPort!! > 0) {
-                            StatusDot(color = Color(0xFF34C759))
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = "已检测到配对服务（端口 $pairPort）",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        } else {
-                            StatusDot(color = MaterialTheme.colorScheme.error)
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = "未检测到配对服务",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.weight(1f)
-                            )
-                            TextButton(onClick = {
-                                codeText = ""
-                                message = null
-                                scanKey++
-                            }) { Text("重试") }
+                        when {
+                            scanning -> {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = "正在搜索配对服务...",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            detectedPort != null -> {
+                                StatusDot(color = Color(0xFF34C759))
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = "已检测到配对服务（端口 $detectedPort）",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            else -> {
+                                StatusDot(color = MaterialTheme.colorScheme.error)
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = "未自动检测到，请在下方手动填写端口",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(onClick = {
+                                    message = null
+                                    scanKey++
+                                }) { Text("重试") }
+                            }
                         }
                     }
                 }
 
+                // ③ 配对码 + 端口
+                Text("③ 输入系统弹窗显示的配对码", style = MaterialTheme.typography.titleSmall)
                 OutlinedTextField(
                     value = codeText,
                     onValueChange = { codeText = it.filter { c -> c.isDigit() }.take(6) },
@@ -447,6 +510,22 @@ fun PairingDialog(
                     singleLine = true,
                     enabled = !working,
                     shape = RoundedCornerShape(14.dp),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = portText,
+                    onValueChange = { portText = it.filter { c -> c.isDigit() }.take(5) },
+                    label = {
+                        Text(
+                            if (detectedPort != null) "配对端口（已自动检测）"
+                            else "配对端口（系统弹窗中 IP:端口 的端口）"
+                        )
+                    },
+                    singleLine = true,
+                    enabled = !working,
+                    shape = RoundedCornerShape(14.dp),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth()
                 )
                 message?.let {
@@ -465,8 +544,8 @@ fun PairingDialog(
                         message = "配对码应为 6 位数字"
                         return@Button
                     }
-                    val port = pairPort?.takeIf { it > 0 } ?: run {
-                        message = "尚未检测到配对服务"
+                    val port = effectivePort ?: run {
+                        message = "请填写配对端口"
                         return@Button
                     }
                     working = true
@@ -483,7 +562,7 @@ fun PairingDialog(
                         }
                     }
                 },
-                enabled = !working && pairPort != null && pairPort!! > 0,
+                enabled = !working && effectivePort != null && codeText.length == 6,
                 shape = RoundedCornerShape(16.dp)
             ) {
                 if (working) {
@@ -501,6 +580,21 @@ fun PairingDialog(
             TextButton(onClick = onDismiss, enabled = !working) { Text("取消") }
         }
     )
+}
+
+/** 拉起系统「无线调试」设置页（发送 Intent 消息），失败回退开发者选项 */
+private fun openWirelessDebuggingSettings(context: Context) {
+    val actions = listOf(
+        "android.settings.WIRELESS_DEBUGGING_SETTINGS",
+        "android.settings.APPLICATION_DEVELOPMENT_SETTINGS"
+    )
+    for (action in actions) {
+        try {
+            context.startActivity(Intent(action))
+            return
+        } catch (_: Exception) {
+        }
+    }
 }
 
 // ==================== 设备信息 ====================

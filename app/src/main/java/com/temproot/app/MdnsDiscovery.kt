@@ -18,9 +18,9 @@ import kotlin.coroutines.resume
  * mDNS 服务发现：自动发现本机 adbd 广播的无线调试端口。
  * 框架移植自 AxManager（Shizuku 同源方案）：
  * - NsdManager 调用统一在主线程 Looper 上执行（子线程调用会抛 IllegalStateException 导致闪退）
- * - 发现失败自动重启扫描（指数退避 / indefinite 模式持续重试）
- * - 校验解析出的地址是否为本机地址（只连自己的 adbd，不连局域网其他设备）
- * - 校验端口在 127.0.0.1 上真实被占用（过滤幻影服务）
+ * - 同一时刻只 resolve 一个服务（NsdManager 限制，并发 resolve 必定失败）
+ * - 所有回调防御式捕获，任何异常都不允许逃逸到主线程 Looper
+ * - 发现启动失败 / 未命中本机服务时自动重启扫描（退避重试 / indefinite 持续重试）
  *
  * 系统行为：
  * - 「无线调试」开启时广播 _adb-tls-connect._tcp（主连接端口）
@@ -46,24 +46,26 @@ object MdnsDiscovery {
         serviceType: String,
         timeoutMs: Long = 10_000,
         indefinite: Boolean = false
-    ): Int? = withTimeoutOrNull(timeoutMs) {
-        suspendCancellableCoroutine { cont ->
-            val appContext = context.applicationContext
-            val main = Handler(Looper.getMainLooper())
+    ): Int? {
+        val appContext = context.applicationContext
+        return withTimeoutOrNull(timeoutMs) {
+            suspendCancellableCoroutine { cont ->
+                val main = Handler(Looper.getMainLooper())
+                // 实例容器：取消回调可能早于初始化 post 执行，不能使用 lateinit
+                val holder = arrayOfNulls<AdbMdns>(1)
 
-            // 关键：NsdManager 必须在带 Looper 的线程上调用，
-            // 直接在 IO 线程调用会抛 IllegalStateException（闪退根因），因此统一 post 到主线程
-            main.post {
-                lateinit var mdns: AdbMdns
-                mdns = AdbMdns(appContext, serviceType, indefinite) { port ->
-                    if (port > 0 && cont.isActive) {
-                        cont.resume(port)
-                        mdns.stop()
+                // 关键：NsdManager 必须在带 Looper 的线程上调用，
+                // 直接在 IO 线程调用会抛 IllegalStateException（闪退根因），因此统一 post 到主线程
+                main.post {
+                    if (cont.isActive) {
+                        holder[0] = AdbMdns(appContext, serviceType, indefinite) { port ->
+                            if (port > 0 && cont.isActive) cont.resume(port)
+                        }.also { it.start() }
                     }
-                    // port == -1 表示服务丢失，继续扫描
                 }
-                cont.invokeOnCancellation { main.post { mdns.stop() } }
-                mdns.start()
+                cont.invokeOnCancellation {
+                    main.post { holder[0]?.let { m -> runCatching { m.stop() } } }
+                }
             }
         }
     }
@@ -78,22 +80,20 @@ object MdnsDiscovery {
     ) {
         private var registered = false
         private var running = false
-        private var serviceName: String? = null
-        private val listener = DiscoveryListener(this)
-        private val nsdManager: NsdManager = context.getSystemService(NsdManager::class.java)
-        private val handler = Handler(Looper.getMainLooper())
+        private var resolving = false
         private var restartScheduled = false
         private var attempts = 0
+        private var serviceName: String? = null
+        private val listener = DiscoveryListener(this)
+        private val nsdManager: NsdManager? =
+            runCatching { context.getSystemService(NsdManager::class.java) }.getOrNull()
+        private val handler = Handler(Looper.getMainLooper())
 
         fun start() {
             if (running) return
             running = true
             attempts = 0
-            if (!registered) {
-                runCatching {
-                    nsdManager.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, listener)
-                }.onFailure { Log.w(TAG, "discoverServices failed: ${it.message}") }
-            }
+            discover()
         }
 
         fun stop() {
@@ -101,54 +101,94 @@ object MdnsDiscovery {
             running = false
             handler.removeCallbacksAndMessages(null)
             if (registered) {
-                runCatching { nsdManager.stopServiceDiscovery(listener) }
+                registered = false
+                runCatching { nsdManager?.stopServiceDiscovery(listener) }
             }
         }
 
-        fun onDiscoveryStart() { registered = true }
+        private fun discover() {
+            runCatching {
+                nsdManager?.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, listener)
+            }.onFailure {
+                Log.w(TAG, "discoverServices failed: ${it.message}")
+                scheduleRestart()
+            }
+        }
 
-        fun onDiscoveryStop() { registered = false }
+        private fun scheduleRestart() {
+            if (!running || restartScheduled) return
+            if (!indefinite && attempts >= 5) return
+            attempts++
+            restartScheduled = true
+            val delay = if (indefinite) 2_000L else attempts * 1_000L
+            handler.postDelayed({
+                restartScheduled = false
+                if (!running) return@postDelayed
+                if (registered) {
+                    // 先停掉当前会话再重启，规避部分机型上的会话冲突
+                    registered = false
+                    runCatching { nsdManager?.stopServiceDiscovery(listener) }
+                    handler.postDelayed({ if (running) discover() }, 300L)
+                } else {
+                    discover()
+                }
+            }, delay)
+        }
+
+        // ---- NsdManager 回调（主线程），全部防御式，异常不得逃逸 ----
+
+        fun onDiscoveryStart() {
+            registered = true
+        }
+
+        fun onDiscoveryStartFailed() {
+            registered = false
+            scheduleRestart()
+        }
+
+        fun onDiscoveryStop() {
+            registered = false
+        }
 
         fun onServiceFound(info: NsdServiceInfo) {
-            runCatching { nsdManager.resolveService(info, ResolveListener(this)) }
+            // NsdManager 同一时刻只允许一个 resolveService，占用中直接跳过（下轮扫描会再发现）
+            if (resolving) return
+            resolving = true
+            runCatching {
+                nsdManager?.resolveService(info, ResolveListener(this))
+            }.onFailure {
+                resolving = false
+                Log.w(TAG, "resolveService failed: ${it.message}")
+            }
         }
 
         fun onServiceLost(info: NsdServiceInfo) {
             if (info.serviceName == serviceName) observer(-1)
         }
 
+        fun onResolveFailed() {
+            resolving = false
+        }
+
         fun onServiceResolved(resolvedService: NsdServiceInfo) {
-            if (running && isLocalDevice(resolvedService) && isPortInUse(resolvedService.port)) {
+            resolving = false
+            if (!running) return
+            if (isLocalDevice(resolvedService) && isPortInUse(resolvedService.port)) {
                 serviceName = resolvedService.serviceName
+                stop()
                 observer(resolvedService.port)
-            } else if (running && (indefinite || attempts < 5) && !restartScheduled) {
-                // 未命中本机服务：重启扫描（indefinite 模式每 2s 持续重试）
-                attempts++
-                restartScheduled = true
-                val delay = if (indefinite) 2000L else attempts * 1000L
-                handler.postDelayed({
-                    if (registered) runCatching { nsdManager.stopServiceDiscovery(listener) }
-                    handler.postDelayed({
-                        if (!registered && running) {
-                            runCatching {
-                                nsdManager.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, listener)
-                            }
-                        }
-                        restartScheduled = false
-                    }, 100L)
-                }, delay)
+            } else {
+                scheduleRestart()
             }
         }
 
         /** 解析出的服务地址是否为本机地址（避免连到局域网其他 Android 设备） */
-        private fun isLocalDevice(info: NsdServiceInfo): Boolean = try {
+        private fun isLocalDevice(info: NsdServiceInfo): Boolean = runCatching {
             val hostAddr = info.host?.hostAddress ?: return false
             NetworkInterface.getNetworkInterfaces().asSequence()
                 .flatMap { it.inetAddresses.asSequence() }
                 .any { it.hostAddress == hostAddr }
-        } catch (e: Exception) {
-            false
-        }
+        }.getOrDefault(false)
 
         /** 端口在 127.0.0.1 上是否真实被监听（占用 = true，用于过滤幻影服务） */
         private fun isPortInUse(port: Int) = try {
@@ -168,6 +208,7 @@ object MdnsDiscovery {
 
         override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
             Log.w(TAG, "onStartDiscoveryFailed: $serviceType, $errorCode")
+            adbMdns.onDiscoveryStartFailed()
         }
 
         override fun onDiscoveryStopped(serviceType: String) {
@@ -176,6 +217,7 @@ object MdnsDiscovery {
 
         override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
             Log.w(TAG, "onStopDiscoveryFailed: $serviceType, $errorCode")
+            adbMdns.onDiscoveryStop()
         }
 
         override fun onServiceFound(serviceInfo: NsdServiceInfo) {
@@ -191,6 +233,7 @@ object MdnsDiscovery {
     private class ResolveListener(private val adbMdns: AdbMdns) : NsdManager.ResolveListener {
         override fun onResolveFailed(nsdServiceInfo: NsdServiceInfo, errorCode: Int) {
             Log.w(TAG, "onResolveFailed: ${nsdServiceInfo.serviceName}, $errorCode")
+            adbMdns.onResolveFailed()
         }
 
         override fun onServiceResolved(nsdServiceInfo: NsdServiceInfo) {
