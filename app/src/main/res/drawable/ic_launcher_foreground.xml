@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Shield shape with lightning bolt inside -->
+    <!-- The icon is centered in the 108x108 canvas with 24dp padding -->
+    <!-- So the drawing area is from 24,24 to 84,84 (60x60dp center) -->
+
+    <!-- Shield body -->
+    <path
+        android:fillColor="#FF6B35"
+        android:pathData="M54,24 L78,34 L78,56 C78,70 68,80 54,84 C40,80 30,70 30,56 L30,34 Z" />
+
+    <!-- Shield inner highlight (slightly lighter area) -->
+    <path
+        android:fillColor="#FF8555"
+        android:pathData="M54,28 L74,36 L74,56 C74,68 66,77 54,80 C42,77 34,68 34,56 L34,36 Z" />
+
+    <!-- Lightning bolt inside the shield -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M58,36 L48,54 L54,54 L50,72 L64,50 L57,50 L62,36 Z" />
+
+</vector>
