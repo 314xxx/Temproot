@@ -5,11 +5,18 @@ import android.content.Context
 import android.content.Intent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 /**
  * 处理通知内输入的配对码（RemoteInput 直接回复）。
- * 收到输入 → 后台配对 → 自动连接 → 通知结果。
+ *
+ * 关键：绝不使用 goAsync()——它的 PendingResult 有 ~10 秒硬限制，
+ * 配对（TLS 握手）+ 连接（mDNS 发现 + 握手 + 验证）串行执行轻松超限，
+ * 超时后系统直接杀进程（"配对成功后闪退"的元凶）。
+ *
+ * 正确做法：onReceive 同步读取 RemoteInput 后立即返回，
+ * 重活交给全局 scope——进程存活由 PairingService 前台服务保证。
  */
 class PairingReplyReceiver : BroadcastReceiver() {
 
@@ -23,33 +30,36 @@ class PairingReplyReceiver : BroadcastReceiver() {
         if (code.isNullOrEmpty() || code.length != 6 || port <= 0) return
 
         val appContext = context.applicationContext
-        val pending = goAsync()
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                AdbShell.init(appContext)
-                PairingNotifier.showPairingProgress(appContext, port)
+        AdbShell.init(appContext)
 
-                val paired = AdbShell.pair(code, port)
-                if (paired.isFailure) {
-                    PairingNotifier.showResult(
-                        appContext, false,
-                        "配对失败: ${paired.exceptionOrNull()?.message}"
-                    )
-                    return@launch
-                }
+        // 全局 scope（非 goAsync）：不受 receiver 10 秒限制，PairingService 保活进程
+        receiverScope.launch {
+            PairingNotifier.showPairingProgress(appContext, port)
 
-                // 配对成功，自动发现连接端口并连接
-                val connected = AdbShell.connect()
+            val paired = AdbShell.pair(code, port)
+            if (paired.isFailure) {
                 PairingNotifier.showResult(
-                    appContext, true,
-                    if (connected.isSuccess) "配对成功，ADB 已连接，可回到应用执行一键 Root"
-                    else "配对成功，但连接失败: ${connected.exceptionOrNull()?.message}"
+                    appContext, false,
+                    "配对失败: ${paired.exceptionOrNull()?.message}"
                 )
-                // 配对流程结束，停止监听服务
-                PairingService.stop(appContext)
-            } finally {
-                pending.finish()
+                return@launch
             }
+
+            // 配对成功，自动发现连接端口并连接
+            //（若对话框路径已连上，AdbShell.connect 内部 tryLock 会立即返回，
+            // 不会与进行中的连接流程打架）
+            val connected = AdbShell.connect()
+            PairingNotifier.showResult(
+                appContext, true,
+                if (connected.isSuccess) "配对成功，ADB 已连接，可回到应用执行一键 Root"
+                else "配对成功，但连接失败: ${connected.exceptionOrNull()?.message}"
+            )
+            // 配对流程结束，停止监听服务
+            PairingService.stop(appContext)
         }
+    }
+
+    companion object {
+        private val receiverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }

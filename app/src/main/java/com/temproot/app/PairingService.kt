@@ -61,6 +61,10 @@ class PairingService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    /** 监听协程是否已在跑（对话框反复打开时 onStartCommand 会多次触发，防重复监听） */
+    @Volatile
+    private var listening = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -72,18 +76,22 @@ class PairingService : Service() {
         // 常驻"监听中"通知，保持进程不被冻结
         startForegroundInternal()
 
-        scope.launch {
-            val port = MdnsDiscovery.discoverPort(
-                this@PairingService, MdnsDiscovery.TLS_PAIRING,
-                timeoutMs = LISTEN_TIMEOUT_MS, indefinite = true
-            )
-            if (port != null) {
-                // 检测到配对服务：发送配对输入通知（保持服务存活等待配对完成）
-                PairingNotifier.showPairingRequest(this@PairingService, port)
-            } else {
-                // 超时未检测到：告知后自动退出
-                showTimeout()
-                stopSelf()
+        if (!listening) {
+            listening = true
+            scope.launch {
+                val port = MdnsDiscovery.discoverPort(
+                    this@PairingService, MdnsDiscovery.TLS_PAIRING,
+                    timeoutMs = LISTEN_TIMEOUT_MS, indefinite = true
+                )
+                listening = false
+                if (port != null) {
+                    // 检测到配对服务：发送配对输入通知（保持服务存活等待配对完成）
+                    PairingNotifier.showPairingRequest(this@PairingService, port)
+                } else {
+                    // 超时未检测到：告知后自动退出
+                    showTimeout()
+                    stopSelf()
+                }
             }
         }
         return START_NOT_STICKY

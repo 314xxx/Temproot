@@ -103,8 +103,12 @@ class PairingDialogActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        // 对话框关闭时停止监听（若配对已完成则服务早已停止，此处幂等）
-        PairingService.stop(this)
+        // 仅在未完成配对时停止监听服务：
+        // 通知路径配对+连接可能仍在后台进行（进程存活性依赖前台服务），
+        // 此时停掉服务会让进程被系统冻结/杀死（"配对成功后闪退"的第二个根因）
+        if (!AdbShell.isConnected) {
+            PairingService.stop(this)
+        }
         super.onDestroy()
     }
 }
@@ -141,9 +145,12 @@ fun PairingDialogScreen(initialPort: Int?, onFinished: () -> Unit) {
         }
     }
 
-    // 对话框关闭时取消未完成的配对通知
+    // 对话框关闭时取消未完成的配对输入通知
+    //（已连接时跳过：通知路径的结果通知用的是同一 ID，不能被误删）
     DisposableEffect(Unit) {
-        onDispose { PairingNotifier.cancel(context) }
+        onDispose {
+            if (!AdbShell.isConnected) PairingNotifier.cancel(context)
+        }
     }
 
     // 通知路径（RemoteInput）配对成功后自动连接 → 状态变为 Connected 时自动关闭
@@ -293,6 +300,8 @@ fun PairingDialogScreen(initialPort: Int?, onFinished: () -> Unit) {
                                     val connected = AdbShell.connect()
                                     working = false
                                     if (connected.isSuccess) {
+                                        // 全部工作已完成，停止监听服务（对话框路径的收尾）
+                                        PairingService.stop(context)
                                         onFinished()
                                     } else {
                                         message = "配对成功但连接失败: ${connected.exceptionOrNull()?.message}"
