@@ -1,18 +1,19 @@
 # TempRoot - HyperOS 一键临时 Root 应用
 
-一个基于 KernelSU late-load 注入的 Android 应用，通过 Shizuku 实现一键获取临时 Root 权限。
+一个基于 KernelSU late-load 注入的 Android 应用，内置 ADB 无线自配对（无需 Shizuku），一键获取临时 Root 权限。界面采用 Miuix / HyperOS 风格设计。
 
 ## 功能特性
 
+- ✅ **无需 Shizuku** - 内置 ADB 客户端，通过无线调试自配对独立获取 shell 权限
+- ✅ **配对一次永久使用** - ADB 证书持久化保存，重启应用后无需重复配对
 - ✅ 一键获取临时 Root（重启失效）
 - ✅ 自动执行 SELinux 宽容注入（cf 漏洞利用）
 - ✅ 自动执行 MQSAS 服务注入（ksud）
-- ✅ 实时日志输出（带颜色区分）
-- ✅ 设备兼容性检查
-- ✅ 安全补丁日期验证
-- ✅ Material You 设计风格
-- ✅ 支持动态取色（Android 12+）
-- ✅ 可配置重试次数
+- ✅ ksud 版本自动跟随已安装的 KernelSU 管理器（避免版本不匹配）
+- ✅ 设备支持表外置 JSON，新增机型无需重新发版
+- ✅ Miuix / HyperOS 风格界面（小米橙主色 + 大圆角卡片）
+- ✅ 分阶段日志实时输出
+- ✅ 可配置重试次数与 ADB 端口
 
 ## 支持设备
 
@@ -30,6 +31,7 @@
 | munch | Redmi K40S / POCO F4 | 2022-03-17 | ✅ 完全支持 |
 | marble | Redmi Note 12 Turbo / POCO F5 | 2023-03-28 | ✅ 完全支持 |
 | mayfly | 小米12S | 2022-07-04 | ✅ 完全支持 |
+| fuxi | 小米13 | 2022-12-11 | ✅ 完全支持 |
 
 ### 小米12 系列
 
@@ -37,7 +39,7 @@
 |---------|------|---------|------|
 | cupid | 小米12 | 2021-12-28 | ⚠️ 需要二月补丁之前 |
 | psyche | 小米12X | 2021-12-28 | ❌ 不支持 |
-| zeus | 小米12 Pro | 2021-12-28 | ❌ 不支持（天玑版） |
+| zeus | 小米12 Pro | 2021-12-28 | ❌ 不支持 |
 | daumier | 小米12 Pro 天玑版 | 2022-07-04 | ❌ 不支持 |
 
 ### 支持的处理器
@@ -48,34 +50,31 @@
 
 **其他机型请勿使用！**
 
-**要求**: 
-- 安全补丁日期 ≤ 2025-02-01
-- 已安装 Shizuku
-
-## 前提条件
-
-1. **安装 Shizuku** - 用于获取 ADB Shell 权限
-2. **激活 Shizuku** - 通过无线调试或 ADB 激活
+**要求**: 安全补丁日期 ≤ 2025-02-01
 
 ## 安装与使用
 
 ### 1. 安装应用
 
-下载 APK 文件并安装到设备上。
+从 [Releases](../../releases) 下载最新 APK 并安装。
 
-### 2. 激活 Shizuku
+### 2. 首次配对（一次性）
 
-1. 打开 Shizuku 应用
-2. 选择"通过无线调试启动"
-3. 按照提示操作
+1. 打开手机「设置 → 开发者选项 → 无线调试」并开启
+2. 点击「使用配对码配对设备」，屏幕会显示 **配对端口** 和 **6 位配对码**
+3. 回到 TempRoot，点击「配对」：
+   - 第一步：填入配对端口和 6 位配对码
+   - 第二步：返回「无线调试」主界面，填入顶部显示的**主端口**（注意不是配对端口）
+4. 配对完成后自动连接
 
-### 3. 使用 TempRoot
+> 配对证书已持久化保存，之后无需再次配对。重新开关无线调试后**主端口会变化**，只需在设置中更新端口即可。
 
-1. 打开 TempRoot 应用
-2. 授予 Shizuku 权限（首次使用会提示）
-3. 点击「一键 Root」按钮
-4. 等待执行完成（可能需要多次尝试）
-5. 成功后会显示 Root 状态
+### 3. 一键 Root
+
+1. 打开 TempRoot，确认 ADB 状态卡显示绿色"已连接"
+2. 点击「一键 Root」按钮
+3. 等待执行完成（SELinux 宽容可能需要多次尝试，请耐心等待）
+4. 完成后查看日志与 Root 状态
 
 ### 4. 验证 Root
 
@@ -87,9 +86,10 @@ su -c id
 
 ## 技术原理
 
-1. **cf 漏洞利用**: 通过 GPU DMA 时序漏洞修改 SELinux 策略
-2. **MQSAS 注入**: 利用小米系统服务漏洞启动 ksud 守护进程
-3. **KernelSU late-load**: 在系统启动后加载内核级 Root 方案
+1. **ADB 无线自配对**: 内置 [Kadb](https://github.com/flyfishxu/Kadb) 客户端（SPAKE2 + TLS + RSA），直连本机 `127.0.0.1` 的 adbd 获取 shell 权限，替代 Shizuku
+2. **cf 漏洞利用**: 通过 GPU DMA 时序漏洞修改 SELinux 策略为宽容模式
+3. **MQSAS 注入**: 利用小米系统服务漏洞启动 ksud 守护进程
+4. **KernelSU late-load**: 在系统启动后加载内核级 Root 方案
 
 ## 项目结构
 
@@ -97,22 +97,49 @@ su -c id
 TempRoot/
 ├── app/
 │   ├── src/main/
-│   │   ├── assets/          # 内置二进制文件 (cf, ksud)
-│   │   ├── java/           # Kotlin 源代码
-│   │   ├── res/            # 资源文件
+│   │   ├── assets/
+│   │   │   ├── cf                 # SELinux 宽容注入二进制
+│   │   │   ├── ksud               # KernelSU 管理器守护进程
+│   │   │   └── supported_devices.json  # 设备支持表
+│   │   ├── java/com/temproot/app/
+│   │   │   ├── AdbShell.kt        # ADB 连接管理（配对/连接/命令/push）
+│   │   │   ├── RootManager.kt     # Root 流程（环境检查/注入/状态）
+│   │   │   ├── MainActivity.kt    # 主界面（Miuix 风格）
+│   │   │   └── SettingsScreen.kt  # 设置页
+│   │   ├── res/                   # 资源文件
 │   │   └── AndroidManifest.xml
-│   └── build.gradle.kts    # 应用构建配置
-├── README.md               # 本文档
-├── BINARY_FILES_README.md  # 二进制文件说明
-└── settings.gradle.kts     # 项目设置
+│   └── build.gradle.kts           # 应用构建配置
+├── README.md                      # 本文档
+├── BINARY_FILES_README.md         # 二进制文件说明
+└── settings.gradle.kts            # 项目设置
 ```
 
 ## 配置说明
 
-在应用设置中可以调整：
+### 应用内设置
 
+- **ADB 主端口**: 无线调试主界面显示的端口号（开关无线调试后会变化）
 - **cf 最大重试次数**: SELinux 宽容注入的尝试上限（推荐 50-100）
-- **日志保存路径**: 默认 `/sdcard/ksulog.txt`
+
+### 设备支持表（外部 JSON）
+
+放置 `/sdcard/temproot_devices.json` 可覆盖内置支持表，**新增机型无需重新发版**：
+
+```json
+{
+  "safePatchDate": "2025-02-01",
+  "devices": [
+    { "codename": "socrates", "name": "Redmi K60 Pro", "kernels": [] }
+  ]
+}
+```
+
+- `codename`: 设备代号（`Build.DEVICE`）
+- `kernels`: 可选，支持的内核版本前缀列表（`uname -r`），留空则不校验内核
+
+### ksud 版本策略
+
+检测到已安装 KernelSU / ReSukiSU 管理器时，自动复用其 `libksud.so`，保证 ksud 与管理器版本一致；否则使用内置版本。
 
 ## 注意事项
 
@@ -127,17 +154,16 @@ TempRoot/
 ## 隐私声明
 
 - 本应用不收集任何用户数据
-- 所有操作均在本地执行
-- 不需要网络权限（仅用于可能的更新检查）
+- 所有操作均在本地执行（ADB 连接目标为本机回环地址 127.0.0.1）
 
 ## 开发说明
 
 ### 构建环境
 
-- Android Studio Hedgehog | 2023.1.1
-- Kotlin 1.9.0
-- Jetpack Compose 1.5.1
-- Shizuku API 13.1.5
+- JDK 17
+- AGP 8.7.3 / Kotlin 2.0.21 / Gradle 8.9
+- Jetpack Compose (BOM 2024.09.03) + Material3
+- [Kadb](https://github.com/flyfishxu/Kadb) 1.2.1（ADB 客户端）
 
 ### 编译步骤
 
@@ -146,10 +172,12 @@ TempRoot/
 3. 同步 Gradle 依赖
 4. 构建 APK：Build → Build Bundle(s) / APK(s) → Build APK(s)
 
+或命令行：`./gradlew assembleDebug`
+
 ## 致谢
 
 - [KernelSU](https://github.com/tiann/KernelSU) - 内核级 Root 方案
-- [Shizuku](https://github.com/RikkaApps/Shizuku) - ADB Shell 权限管理
+- [Kadb](https://github.com/flyfishxu/Kadb) - Kotlin ADB 客户端（无线配对）
 - [Uotan Wiki](https://wiki.uotan.cn) - 小米设备代号参考
 
 ## 许可证
@@ -163,4 +191,5 @@ TempRoot/
 ## 参考链接
 
 - KernelSU: https://github.com/tiann/KernelSU
+- Kadb: https://github.com/flyfishxu/Kadb
 - 小米设备代号: https://wiki.uotan.cn/index.php?title=小米手机设备代号名称对照表
