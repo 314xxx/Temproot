@@ -188,6 +188,7 @@ TempRoot/
 
 - [KernelSU](https://github.com/tiann/KernelSU) - 内核级 Root 方案
 - [Kadb](https://github.com/flyfishxu/Kadb) - Kotlin ADB 客户端（无线配对）
+- [spake2-java](https://github.com/MuntashirAkon/spake2-java)（LGPL-3.0）- 纯 Java SPAKE2 实现，替代 Kadb 的 native 依赖（根除 SIGSEGV 级闪退），以 jar 形式链接于 [app/libs](app/libs)
 - [AxManager](https://github.com/fahrez182/AxManager) - mDNS 端口自动发现方案参考
 - [Uotan Wiki](https://wiki.uotan.cn) - 小米设备代号参考
 
