@@ -80,6 +80,17 @@ fun SettingsScreen(
                     Text(text = "日志保存路径: /sdcard/ksulog.txt", style = MaterialTheme.typography.bodyMedium)
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(text = "二进制文件路径: /data/local/tmp/", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "设备支持表: ${RootManager.EXTERNAL_CONFIG_PATH} (可选，优先于内置表)",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "安装 KernelSU/ReSukiSU 管理器后，ksud 将自动复用其版本",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
             

@@ -7,69 +7,154 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import rikka.shizuku.Shizuku
 import java.io.BufferedReader
 import java.io.File
-import java.io.FileOutputStream
 import java.io.InputStreamReader
 
 class RootManager(private val context: Context) {
 
-    private val tag = "RootManager"
-    
-    // 兼容的设备列表
-    private val supportedDevices = listOf(
-        // K60 系列
-        "socrates",      // Redmi K60 Pro
-        "mondrian",      // Redmi K60 / POCO F5 Pro
-        "rembrandt",     // Redmi K60E
-        
-        // K50 系列
-        "rubens",        // Redmi K50
-        "matisse",       // Redmi K50 Pro
-        "diting",        // Redmi K50 至尊版 / 小米12T Pro
-        "ingres",        // Redmi K50 电竞版 / POCO F4 GT
-        
-        // K40 系列
-        "munch",         // Redmi K40S / POCO F4
-        
-        // Note 系列
-        "marble",        // Redmi Note 12 Turbo / POCO F5
-        
-        // 小米12S 系列
-        "mayfly",        // 小米12S
-        
-        // 小米13 系列
-        "fuxi"           // 小米13
-    )
-    
-    // 安全补丁截止日期
-    private val safePatchDate = "2025-02-01"
+    companion object {
+        private const val TAG = "RootManager"
+        private const val TARGET_DIR = "/data/local/tmp"
 
-    suspend fun checkEnvironment(): Result<String> = withContext(Dispatchers.IO) {
+        // 外部设备支持表路径（优先于内置配置，免发版适配新机型）
+        const val EXTERNAL_CONFIG_PATH = "/sdcard/temproot_devices.json"
+
+        // 已知 KernelSU 管理器包名（复用其 libksud.so，保证版本与管理器一致）
+        private val KSU_MANAGERS = listOf(
+            "me.weishu.kernelsu" to "KernelSU",
+            "com.resukisu.resukisu" to "ReSukiSU"
+        )
+    }
+
+    private data class DeviceEntry(
+        val codename: String,
+        val name: String,
+        val kernels: List<String>
+    )
+
+    private data class DeviceConfig(
+        val safePatchDate: String,
+        val devices: List<DeviceEntry>,
+        val source: String
+    )
+
+    // ==================== 设备支持表 ====================
+
+    // 加载设备支持表：外部 JSON 优先，失败回退内置 assets
+    private fun loadDeviceConfig(): DeviceConfig {
+        val external = File(EXTERNAL_CONFIG_PATH)
+        if (external.canRead()) {
+            try {
+                parseConfig(external.readText(), "外部配置")?.let { return it }
+            } catch (e: Exception) {
+                Log.w(TAG, "外部配置加载失败: ${e.message}")
+            }
+        }
+        val json = context.assets.open("supported_devices.json")
+            .bufferedReader().use { it.readText() }
+        return parseConfig(json, "内置配置")
+            ?: throw IllegalStateException("内置设备支持表解析失败")
+    }
+
+    private fun parseConfig(json: String, source: String): DeviceConfig? = try {
+        val obj = JSONObject(json)
+        val devices = mutableListOf<DeviceEntry>()
+        obj.optJSONArray("devices")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val d = arr.getJSONObject(i)
+                val kernels = mutableListOf<String>()
+                d.optJSONArray("kernels")?.let { ka ->
+                    for (j in 0 until ka.length()) {
+                        kernels.add(ka.getString(j))
+                    }
+                }
+                devices.add(
+                    DeviceEntry(
+                        codename = d.getString("codename"),
+                        name = d.optString("name", d.getString("codename")),
+                        kernels = kernels
+                    )
+                )
+            }
+        }
+        DeviceConfig(
+            safePatchDate = obj.optString("safePatchDate", "2025-02-01"),
+            devices = devices,
+            source = source
+        )
+    } catch (e: Exception) {
+        Log.w(TAG, "配置解析失败 ($source): ${e.message}")
+        null
+    }
+
+    // ==================== 环境检查（分阶段） ====================
+
+    suspend fun checkEnvironment(onLog: (String) -> Unit = {}): Result<String> = withContext(Dispatchers.IO) {
         try {
-            // 1. 检查 Shizuku 权限
+            // 阶段 1/5: Shizuku 权限
+            onLog("[1/5] 检查 Shizuku 权限...")
             if (!checkShizukuPermission()) {
+                onLog("  ❌ Shizuku 权限未授予")
                 return@withContext Result.failure(Exception("Shizuku 权限未授予"))
             }
+            onLog("  ✓ Shizuku 权限正常")
 
-            // 2. 检查设备型号
+            // 阶段 2/5: 设备 + 内核版本匹配
+            onLog("[2/5] 检查设备与内核版本...")
+            val config = loadDeviceConfig()
             val device = Build.DEVICE ?: "unknown"
-            if (!supportedDevices.contains(device)) {
+            val entry = config.devices.find { it.codename == device }
+            if (entry == null) {
+                onLog("  ❌ 不支持的设备: $device")
+                onLog("  ℹ 可创建 $EXTERNAL_CONFIG_PATH 添加支持")
                 return@withContext Result.failure(Exception("不支持的设备: $device"))
             }
+            onLog("  ✓ 设备: ${entry.name} ($device)")
 
-            // 3. 检查安全补丁日期
+            val kernel = getKernelVersion()
+            if (entry.kernels.isNotEmpty()) {
+                val matched = entry.kernels.any { kernel.startsWith(it) }
+                if (!matched) {
+                    onLog("  ❌ 内核不匹配: $kernel")
+                    return@withContext Result.failure(
+                        Exception("内核版本不匹配: $kernel (需要: ${entry.kernels.joinToString()})")
+                    )
+                }
+            }
+            onLog("  ✓ 内核: ${kernel.ifBlank { "未知(跳过匹配)" }}")
+
+            // 阶段 3/5: 安全补丁
+            onLog("[3/5] 检查安全补丁日期...")
             val patch = Build.VERSION.SECURITY_PATCH
-            if (patch > safePatchDate) {
-                return@withContext Result.failure(Exception("安全补丁日期 ($patch) 过高，需要 <= $safePatchDate"))
+            if (patch > config.safePatchDate) {
+                onLog("  ❌ 补丁 $patch > ${config.safePatchDate}")
+                return@withContext Result.failure(
+                    Exception("安全补丁日期 ($patch) 过高，需要 <= ${config.safePatchDate}")
+                )
+            }
+            onLog("  ✓ 补丁: $patch (支持表: ${config.source})")
+
+            // 阶段 4/5: ksud 来源检测
+            onLog("[4/5] 检测 ksud 来源...")
+            val managerKsud = findManagerKsud()
+            if (managerKsud != null) {
+                onLog("  ✓ 复用已装管理器的 ksud (版本与管理器一致)")
+                onLog("    来源: $managerKsud")
+            } else {
+                onLog("  ℹ 未检测到 KernelSU 管理器，使用内置 ksud")
+                onLog("    提示: 安装 KernelSU/ReSukiSU 管理器可自动跟随其版本")
             }
 
-            // 4. 准备文件
-            prepareFiles()
+            // 阶段 5/5: 文件传输
+            onLog("[5/5] 传输文件到 $TARGET_DIR ...")
+            prepareFiles(managerKsud, onLog)
 
-            return@withContext Result.success("环境检查通过: $device, Patch: $patch")
+            Result.success("${entry.name}, Patch: $patch")
         } catch (e: Exception) {
+            onLog("  ❌ ${e.message}")
             Result.failure(e)
         }
     }
@@ -82,23 +167,56 @@ class RootManager(private val context: Context) {
         }
     }
 
+    // 获取内核版本 (uname -r)
+    suspend fun getKernelVersion(): String = withContext(Dispatchers.IO) {
+        try {
+            val (_, out) = executeCommand("uname -r")
+            out.trim().ifBlank { "" }
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    // 查找已安装管理器提供的 libksud.so，返回其路径（未找到返回 null）
+    private suspend fun findManagerKsud(): String? {
+        for ((pkg, label) in KSU_MANAGERS) {
+            val (_, apkOut) = executeCommand(
+                "pm path $pkg 2>/dev/null | head -1 | sed 's/package://'"
+            )
+            val apk = apkOut.trim()
+            if (apk.isBlank() || !apk.startsWith("/data/")) continue
+
+            // native lib 目录（系统安装时自动解压）
+            val libDir = apk.substringBeforeLast('/')
+            val (_, libOut) = executeCommand(
+                "ls $libDir/lib/*/libksud.so 2>/dev/null | head -1"
+            )
+            val lib = libOut.trim()
+            if (lib.isNotBlank() && lib.startsWith("/data/") && !lib.contains("ERROR")) {
+                Log.i(TAG, "ksud from $label: $lib")
+                return lib
+            }
+        }
+        return null
+    }
+
     // 使用 Shizuku 执行 Shell 命令
     private suspend fun executeCommand(command: String): Pair<Int, String> = withContext(Dispatchers.IO) {
         try {
             val process = Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
             val reader = BufferedReader(InputStreamReader(process.inputStream))
             val errorReader = BufferedReader(InputStreamReader(process.errorStream))
-            
+
             val output = StringBuilder()
             var line: String?
-            
+
             while (reader.readLine().also { line = it } != null) {
                 output.append(line).append("\n")
             }
             while (errorReader.readLine().also { line = it } != null) {
                 output.append("ERROR: ").append(line).append("\n")
             }
-            
+
             val exitCode = process.waitFor()
             Pair(exitCode, output.toString().trim())
         } catch (e: Exception) {
@@ -106,21 +224,69 @@ class RootManager(private val context: Context) {
         }
     }
 
-    // 从 assets 复制文件到 /data/local/tmp
-    private suspend fun prepareFiles() = withContext(Dispatchers.IO) {
-        val files = listOf("cf", "ksud")
-        files.forEach { fileName ->
-            val targetFile = File("/data/local/tmp", fileName)
-            context.assets.open(fileName).use { input ->
-                FileOutputStream(targetFile).use { output ->
-                    input.copyTo(output)
-                }
+    // ==================== 文件传输 ====================
+
+    // 传输文件：assets 提取到应用外部存储中转，再 cp 到 /data/local/tmp
+    // ksud 优先使用已装管理器版本（管理器升级后自动跟随，无需更新本应用）
+    private suspend fun prepareFiles(managerKsud: String?, onLog: (String) -> Unit) = withContext(Dispatchers.IO) {
+        val tempDir = context.getExternalFilesDir(null)
+            ?: throw Exception("无法访问外部存储目录")
+
+        // 1. cf: 始终使用内置 assets
+        val cfTemp = extractAsset("cf", tempDir)
+        copyToTarget(cfTemp.absolutePath, cfTemp.length(), "cf", onLog)
+        cfTemp.delete()
+
+        // 2. ksud: 管理器版本优先
+        if (managerKsud != null) {
+            val (_, statOut) = executeCommand("stat -c %s '$managerKsud' 2>/dev/null")
+            val managerSize = statOut.trim().toLongOrNull()
+            if (managerSize != null && managerSize > 0) {
+                copyToTarget(managerKsud, managerSize, "ksud", onLog)
+            } else {
+                onLog("  ⚠ 管理器 ksud 不可读，回退内置版本")
+                val ksudTemp = extractAsset("ksud", tempDir)
+                copyToTarget(ksudTemp.absolutePath, ksudTemp.length(), "ksud", onLog)
+                ksudTemp.delete()
             }
-            // 设置权限
-            executeCommand("chmod 777 ${targetFile.absolutePath}")
-            executeCommand("chown shell:shell ${targetFile.absolutePath}")
+        } else {
+            val ksudTemp = extractAsset("ksud", tempDir)
+            copyToTarget(ksudTemp.absolutePath, ksudTemp.length(), "ksud", onLog)
+            ksudTemp.delete()
         }
     }
+
+    // 从 assets 提取到应用外部存储目录（shell 用户可读）
+    private fun extractAsset(name: String, tempDir: File): File {
+        val tempFile = File(tempDir, name)
+        context.assets.open(name).use { input ->
+            tempFile.outputStream().use { output -> input.copyTo(output) }
+        }
+        return tempFile
+    }
+
+    // cp 到目标路径 + 设置权限 + 大小校验
+    private suspend fun copyToTarget(sourcePath: String, expectedSize: Long, name: String, onLog: (String) -> Unit) {
+        val targetPath = "$TARGET_DIR/$name"
+
+        val (cpExit, cpOut) = executeCommand("cp -f '$sourcePath' '$targetPath'")
+        if (cpExit != 0) {
+            throw Exception("复制 $name 失败 (exit: $cpExit): $cpOut")
+        }
+
+        executeCommand("chmod 777 $targetPath")
+        executeCommand("chown shell:shell $targetPath")
+
+        // 验证文件大小
+        val (_, sizeOut) = executeCommand("stat -c %s $targetPath 2>/dev/null || wc -c < $targetPath")
+        val actual = sizeOut.trim().toLongOrNull() ?: -1L
+        if (actual != expectedSize) {
+            throw Exception("$name 大小不匹配: 期望 $expectedSize, 实际 $actual")
+        }
+        onLog("  ✓ $name → $targetPath ($actual bytes)")
+    }
+
+    // ==================== Root 执行 ====================
 
     // 执行 SELinux 临时宽容
     suspend fun setSELinuxPermissive(
@@ -130,27 +296,27 @@ class RootManager(private val context: Context) {
     ): Boolean = withContext(Dispatchers.IO) {
         onLog("=== 开始执行 SELinux 宽容注入 (cf) ===")
         onLog("提示：此过程可能需要多次尝试，请耐心等待")
-        
+
         var count = 0
-        
+
         while (count < maxRetries) {
             count++
             onStatusUpdate("尝试 $count/$maxRetries")
-            
+
             // 导出环境变量并执行 cf
             val cmd = """
                 export SELINUX_VIRTUAL=0xffffffc00aa42b90
                 /data/local/tmp/cf
             """.trimIndent()
-            
+
             val (exitCode, output) = executeCommand(cmd)
             onLog("[尝试 $count] cf 执行完成 (exit: $exitCode)")
-            
+
             // 检查 SELinux 状态
             val (_, statusOutput) = executeCommand("getenforce")
             val currentStatus = statusOutput.trim()
             onLog("[尝试 $count] SELinux: $currentStatus")
-            
+
             if (currentStatus.equals("Permissive", ignoreCase = true)) {
                 onLog("")
                 onLog("================================")
@@ -159,15 +325,15 @@ class RootManager(private val context: Context) {
                 onLog("================================")
                 return@withContext true
             }
-            
+
             if (output.contains("ERROR") || output.contains("Exception")) {
                 onLog("[尝试 $count] 执行出错: $output")
             }
-            
+
             // 失败重试间隔 1 秒
             delay(1000)
         }
-        
+
         onLog("❌ 达到最大重试次数 ($maxRetries)，SELinux 宽容失败")
         false
     }
@@ -175,23 +341,23 @@ class RootManager(private val context: Context) {
     // 执行 MQSAS 服务注入 (ksud)
     suspend fun injectKSUD(onLog: (String) -> Unit): Boolean = withContext(Dispatchers.IO) {
         onLog("=== 开始执行 MQSAS 服务注入 (ksud) ===")
-        
+
         // 构建 service call 命令
         val cmd = """
             service call miui.mqsas.IMQSNative 21 i32 1 s16 "/data/local/tmp/ksud" i32 1 s16 "late-load" s16 "/sdcard/ksulog.txt" i32 600
         """.trimIndent()
-        
+
         val (exitCode, output) = executeCommand(cmd)
         onLog("命令执行结果 (exit: $exitCode)")
         onLog("输出: $output")
-        
+
         // 等待一下让 ksud 启动
         delay(2000)
-        
+
         // 检查 ksud 是否运行
         val (_, psOutput) = executeCommand("ps -ef | grep ksud | grep -v grep")
         val isRunning = psOutput.contains("ksud")
-        
+
         if (isRunning) {
             onLog("✅ ksud 进程已成功启动")
             onLog("请查看 /sdcard/ksulog.txt 获取详细日志")
@@ -206,19 +372,22 @@ class RootManager(private val context: Context) {
     // 检查当前 Root 状态
     suspend fun checkRootStatus(): Map<String, String> = withContext(Dispatchers.IO) {
         val status = mutableMapOf<String, String>()
-        
+
+        // 内核版本
+        status["kernel"] = getKernelVersion().ifBlank { "未知" }
+
         // SELinux 状态
         val (_, selinux) = executeCommand("getenforce")
         status["selinux"] = selinux.trim()
-        
+
         // ksud 进程
         val (_, ps) = executeCommand("ps -ef | grep ksud | grep -v grep")
         status["ksud_running"] = if (ps.contains("ksud")) "运行中" else "未运行"
-        
+
         // su 可用性
         val (_, suTest) = executeCommand("su -c id 2>/dev/null || echo 'no_root'")
         status["root_available"] = if (suTest.contains("uid=0")) "已获取" else "未获取"
-        
+
         status
     }
 }

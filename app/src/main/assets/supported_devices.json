@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "safePatchDate": "2025-02-01",
+  "devices": [
+    { "codename": "socrates",  "name": "Redmi K60 Pro",                    "kernels": [] },
+    { "codename": "mondrian",  "name": "Redmi K60 / POCO F5 Pro",          "kernels": [] },
+    { "codename": "rembrandt", "name": "Redmi K60E",                       "kernels": [] },
+    { "codename": "rubens",    "name": "Redmi K50",                        "kernels": [] },
+    { "codename": "matisse",   "name": "Redmi K50 Pro",                    "kernels": [] },
+    { "codename": "diting",    "name": "Redmi K50 至尊版 / 小米12T Pro",   "kernels": [] },
+    { "codename": "ingres",    "name": "Redmi K50 电竞版 / POCO F4 GT",    "kernels": [] },
+    { "codename": "munch",     "name": "Redmi K40S / POCO F4",             "kernels": [] },
+    { "codename": "marble",    "name": "Redmi Note 12 Turbo / POCO F5",    "kernels": [] },
+    { "codename": "mayfly",    "name": "小米12S",                          "kernels": [] },
+    { "codename": "fuxi",      "name": "小米13",                           "kernels": [] }
+  ]
+}

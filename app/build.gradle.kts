@@ -55,7 +55,9 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.5.3")
     
     // Shizuku
-    val shizukuVersion = "13.1.5"
+    // 注: 13.x 将 newProcess 设为 private，12.2.0 是最后一个公开该 API 的版本；
+    // 服务端（Shizuku 应用）保持向后兼容，新版服务端可正常配合使用
+    val shizukuVersion = "12.2.0"
     implementation("dev.rikka.shizuku:api:$shizukuVersion")
     implementation("dev.rikka.shizuku:provider:$shizukuVersion")
 }

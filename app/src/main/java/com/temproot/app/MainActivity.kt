@@ -156,7 +156,7 @@ fun MainScreen(
             
             Spacer(modifier = Modifier.height(16.dp))
             
-            DeviceInfoCard()
+            DeviceInfoCard(rootStatus)
             
             Spacer(modifier = Modifier.height(16.dp))
             
@@ -176,7 +176,7 @@ fun MainScreen(
                             fun log(msg: String) { logs = logs + msg }
                             
                             log("🔍 开始环境检查...")
-                            val checkResult = rootManager.checkEnvironment()
+                            val checkResult = rootManager.checkEnvironment(onLog = { log(it) })
                             
                             if (checkResult.isFailure) {
                                 log("❌ 环境检查失败: ${checkResult.exceptionOrNull()?.message}")
@@ -186,7 +186,7 @@ fun MainScreen(
                                 return@launch
                             }
                             
-                            log("✅ 环境检查通过")
+                            log("✅ 环境检查通过: ${checkResult.getOrDefault("")}")
                             environmentCheck = null
                             
                             currentStatus = "执行 SELinux 宽容..."
@@ -197,10 +197,8 @@ fun MainScreen(
                             )
                             
                             if (!selinuxSuccess) {
-                                log("❌ SELinux 宽容失败")
-                                currentStatus = "失败"
-                                isProcessing = false
-                                return@launch
+                                log("⚠️ SELinux 宽容失败")
+                                log("ℹ 降级策略：继续尝试 ksud 注入（未宽容时成功率较低）")
                             }
                             
                             currentStatus = "执行 MQSAS 注入..."
@@ -340,7 +338,7 @@ fun StatusItem(label: String, value: String) {
 }
 
 @Composable
-fun DeviceInfoCard() {
+fun DeviceInfoCard(status: Map<String, String>) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(text = "设备信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -349,6 +347,7 @@ fun DeviceInfoCard() {
             Text("设备: ${android.os.Build.DEVICE}")
             Text("系统: Android ${android.os.Build.VERSION.RELEASE}")
             Text("安全补丁: ${android.os.Build.VERSION.SECURITY_PATCH}")
+            Text("内核: ${status["kernel"] ?: "未知"}")
         }
     }
 }
