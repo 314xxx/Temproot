@@ -367,7 +367,10 @@ fun PairingDialog(
     // 打开弹层即开始监听配对服务广播（系统配对弹窗弹出时立即捕获端口）
     LaunchedEffect(scanKey) {
         pairPort = null
-        pairPort = MdnsDiscovery.discoverPort(context, MdnsDiscovery.TLS_PAIRING, timeoutMs = 120_000)
+        pairPort = MdnsDiscovery.discoverPort(
+            context, MdnsDiscovery.TLS_PAIRING,
+            timeoutMs = 120_000, indefinite = true
+        )
     }
 
     val scanning = pairPort == null
